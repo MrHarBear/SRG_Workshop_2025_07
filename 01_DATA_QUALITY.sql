@@ -32,54 +32,18 @@ AS
     AND (AGE < 18 OR AGE > 85)
 ) FROM INPUT_TABLE';
 
--- Missing broker assignment validation using SQL
-CREATE OR REPLACE DATA METRIC FUNCTION RAW_DATA.MISSING_BROKER_ASSIGNMENT_COUNT(
+-- Broker ID format validation using SQL for pattern checking
+CREATE OR REPLACE DATA METRIC FUNCTION RAW_DATA.INVALID_BROKER_ID_COUNT(
     INPUT_TABLE TABLE(BROKER_ID VARCHAR)
 )
 RETURNS NUMBER
 LANGUAGE SQL
-COMMENT = 'Count of customers without broker assignment'
+COMMENT = 'Count of broker IDs that do not follow BRK### format'
 AS
 'SELECT COUNT_IF(
-    BROKER_ID IS NULL OR TRIM(BROKER_ID) = ''''
+    BROKER_ID IS NOT NULL 
+    AND NOT REGEXP_LIKE(BROKER_ID, ''^BRK[0-9]{3}$'')
 ) FROM INPUT_TABLE';
-
--- Claims amount validation using SQL for range checking
-CREATE OR REPLACE DATA METRIC FUNCTION RAW_DATA.INVALID_CLAIM_AMOUNT_COUNT(
-    INPUT_TABLE TABLE(CLAIM_AMOUNT NUMBER)
-)
-RETURNS NUMBER
-LANGUAGE SQL
-COMMENT = 'Count of claims with invalid amounts (outside $100-$500,000 range)'
-AS
-'SELECT COUNT_IF(
-    CLAIM_AMOUNT IS NOT NULL 
-    AND (CLAIM_AMOUNT < 100 OR CLAIM_AMOUNT > 500000)
-) FROM INPUT_TABLE';
-
--- Orphaned claims validation using SQL for join logic
-CREATE OR REPLACE DATA METRIC FUNCTION RAW_DATA.ORPHANED_CLAIMS_COUNT(
-    INPUT_TABLE TABLE(POLICY_NUMBER VARCHAR)
-)
-RETURNS NUMBER
-LANGUAGE SQL
-COMMENT = 'Count of claims without corresponding customer records'
-AS
-'SELECT COUNT(*) FROM INPUT_TABLE t 
-WHERE NOT EXISTS (
-    SELECT 1 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW c 
-    WHERE c.POLICY_NUMBER = t.POLICY_NUMBER
-)';
-
--- Inactive broker validation using SQL for status checking
-CREATE OR REPLACE DATA METRIC FUNCTION RAW_DATA.INACTIVE_BROKER_COUNT(
-    INPUT_TABLE TABLE(ACTIVE BOOLEAN)
-)
-RETURNS NUMBER
-LANGUAGE SQL
-COMMENT = 'Count of inactive broker records'
-AS
-'SELECT COUNT_IF(ACTIVE = FALSE OR ACTIVE IS NULL) FROM INPUT_TABLE';
 
 -- Python UDF for complex geographic territory validation
 CREATE OR REPLACE DATA METRIC FUNCTION RAW_DATA.TERRITORY_COVERAGE_GAPS(
@@ -127,20 +91,18 @@ ALTER TABLE RAW_DATA.BROKERS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
 
 -- CUSTOMERS TABLE: Custom + System DMFs
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_CUSTOMER_AGE_COUNT ON (AGE);
-ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.MISSING_BROKER_ASSIGNMENT_COUNT ON (BROKER_ID);
+ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_BROKER_ID_COUNT ON (BROKER_ID);
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (POLICY_NUMBER);
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (POLICY_NUMBER);
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.ROW_COUNT ON ();
 
--- CLAIMS TABLE: Custom + System DMFs
-ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_CLAIM_AMOUNT_COUNT ON (CLAIM_AMOUNT);
-ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION RAW_DATA.ORPHANED_CLAIMS_COUNT ON (POLICY_NUMBER);
+-- CLAIMS TABLE: System DMFs only
 ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (POLICY_NUMBER);
 ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (POLICY_NUMBER);
 ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.ROW_COUNT ON ();
 
 -- BROKERS TABLE: Custom + System DMFs
-ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INACTIVE_BROKER_COUNT ON (ACTIVE);
+ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_BROKER_ID_COUNT ON (BROKER_ID);
 ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.TERRITORY_COVERAGE_GAPS ON (TERRITORY, OFFICE_LOCATION);
 ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (BROKER_ID);
 ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (BROKER_ID);
@@ -174,16 +136,6 @@ SELECT
             CASE WHEN value = 0 THEN 'EXCELLENT'
                  WHEN value <= 2 THEN 'GOOD'
                  WHEN value <= 10 THEN 'WARNING'
-                 ELSE 'CRITICAL' END
-        WHEN metric_name LIKE '%ORPHANED%' THEN
-            CASE WHEN value = 0 THEN 'EXCELLENT'
-                 WHEN value <= 1 THEN 'GOOD'
-                 WHEN value <= 5 THEN 'WARNING'
-                 ELSE 'CRITICAL' END
-        WHEN metric_name LIKE '%INACTIVE%' THEN
-            CASE WHEN value <= 1 THEN 'EXCELLENT'
-                 WHEN value <= 3 THEN 'GOOD'
-                 WHEN value <= 5 THEN 'WARNING'
                  ELSE 'CRITICAL' END
         WHEN metric_name LIKE '%COVERAGE_GAPS%' THEN
             CASE WHEN value = 0 THEN 'EXCELLENT'
@@ -291,8 +243,6 @@ SELECT
         WHEN metric_name LIKE '%INVALID%' AND value > 0 THEN 'ATTENTION_REQUIRED'
         WHEN metric_name LIKE '%NULL_COUNT%' AND value > 0 THEN 'DATA_COMPLETENESS_ISSUE'
         WHEN metric_name LIKE '%DUPLICATE%' AND value > 0 THEN 'DATA_UNIQUENESS_ISSUE'
-        WHEN metric_name LIKE '%ORPHANED%' AND value > 0 THEN 'REFERENTIAL_INTEGRITY_ISSUE'
-        WHEN metric_name LIKE '%INACTIVE%' AND value > 2 THEN 'BROKER_AVAILABILITY_ISSUE'
         WHEN metric_name LIKE '%COVERAGE_GAPS%' AND value > 0 THEN 'TERRITORY_COVERAGE_ISSUE'
         ELSE 'OK'
     END as status_flag
@@ -352,20 +302,25 @@ SELECT
 FROM RAW_DATA.RELATIONSHIP_QUALITY_METRICS;
 
 /* ================================================================================
-DATA QUALITY MONITORING SETUP COMPLETE
+DATA QUALITY MONITORING SETUP COMPLETE - STREAMLINED VERSION
 ================================================================================
 Setup Complete:
-• Custom DMFs: 6 functions (5 SQL + 1 Python) for business logic validation
-• System DMFs: 15 functions across 3 tables for core data quality
+• Custom DMFs: 3 functions (2 SQL + 1 Python) for essential business validation
+• System DMFs: 9 functions across 3 tables for core data quality
 • Monitoring: Automated 5-minute scheduling for all quality checks
 • Views: 3 summary views for quality scoring and relationship validation
-• Coverage: Customers (5 DMFs), Claims (5 DMFs), Brokers (5 DMFs)
+• Coverage: Customers (5 DMFs), Claims (3 DMFs), Brokers (5 DMFs)
 
-Quality Framework:
-• Business Rules: Age validation, claim amount validation, broker assignment
-• Data Integrity: NULL checks, duplicate detection, referential integrity
-• Operational Quality: Broker status, territory coverage, relationship health
+Streamlined Quality Framework:
+• Business Rules: Customer age validation, broker ID format validation
+• Data Integrity: NULL checks, duplicate detection
+• Operational Quality: Territory coverage validation
 • Real-time Scoring: Automated quality scoring with status classification
+
+Custom DMF Focus:
+• INVALID_CUSTOMER_AGE_COUNT: Validates customer age within 18-85 range
+• INVALID_BROKER_ID_COUNT: Ensures broker IDs follow BRK### format pattern
+• TERRITORY_COVERAGE_GAPS: Complex Python validation for geographic coverage
 
 Ready for: Phase 3 - Advanced Analytics and Governance implementation
 ================================================================================
