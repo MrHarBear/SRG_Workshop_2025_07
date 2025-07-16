@@ -1,8 +1,8 @@
 /* ================================================================================
-INSURANCE WORKSHOP - RISK ANALYTICS AND GOVERNANCE
+INSURANCE WORKSHOP - RISK ANALYTICS
 ================================================================================
-Purpose: Advanced analytics with progressive governance for three-entity model
-Scope: Mixed UDFs, Dynamic Tables, classification, governance policies, sharing
+Purpose: Advanced analytics with mixed UDFs and Dynamic Tables for three-entity model
+Scope: SQL/Python UDFs, multi-level Dynamic Tables, real-time analytics
 Entities: Comprehensive broker-customer-claims risk intelligence platform
 ================================================================================
 */
@@ -377,7 +377,7 @@ SELECT
     END as CUSTOMER_REGION,
     
     -- Data lineage tracking
-    GREATEST(c.LOAD_TIMESTAMP, b.LOAD_TIMESTAMP, COALESCE(cl.LOAD_TIMESTAMP, c.LOAD_TIMESTAMP)) as LAST_UPDATED
+    CURRENT_TIMESTAMP() as LAST_UPDATED
     
 FROM RAW_DATA.CUSTOMERS_RAW c
 LEFT JOIN RAW_DATA.BROKERS_RAW b ON c.BROKER_ID = b.BROKER_ID
@@ -420,14 +420,14 @@ SELECT
     CUSTOMER_REGION,
     COUNT(*) as CUSTOMERS_IN_REGION,
     
-    LAST_UPDATED
+    CURRENT_TIMESTAMP() as LAST_UPDATED
     
 FROM ANALYTICS.CUSTOMER_BROKER_CLAIMS_INTEGRATED
 WHERE BROKER_ID IS NOT NULL
 GROUP BY 
     BROKER_ID, BROKER_FIRST_NAME, BROKER_LAST_NAME, BROKER_OFFICE,
     BROKER_SATISFACTION, BROKER_EXPERIENCE, BROKER_TRAINING, BROKER_ACTIVE,
-    BROKER_TERRITORY, CUSTOMER_REGION, LAST_UPDATED;
+    BROKER_TERRITORY, CUSTOMER_REGION;
 
 -- Create additional analytics layer for customer risk profiling
 CREATE OR REPLACE DYNAMIC TABLE ANALYTICS.CUSTOMER_RISK_PROFILE
@@ -448,7 +448,11 @@ SELECT
     
     -- Broker influence
     BROKER_ID,
-    BROKER_TIER,
+    ANALYTICS.DETERMINE_BROKER_TIER(
+        (SELECT BROKER_SATISFACTION FROM ANALYTICS.CUSTOMER_BROKER_CLAIMS_INTEGRATED b WHERE b.BROKER_ID = CUSTOMER_BROKER_CLAIMS_INTEGRATED.BROKER_ID LIMIT 1),
+        (SELECT BROKER_EXPERIENCE FROM ANALYTICS.CUSTOMER_BROKER_CLAIMS_INTEGRATED b WHERE b.BROKER_ID = CUSTOMER_BROKER_CLAIMS_INTEGRATED.BROKER_ID LIMIT 1),
+        (SELECT BROKER_TRAINING FROM ANALYTICS.CUSTOMER_BROKER_CLAIMS_INTEGRATED b WHERE b.BROKER_ID = CUSTOMER_BROKER_CLAIMS_INTEGRATED.BROKER_ID LIMIT 1)
+    ) as BROKER_TIER,
     BROKER_SATISFACTION,
     
     -- SQL UDF risk calculations
@@ -458,7 +462,7 @@ SELECT
     -- Python UDF customer segmentation
     ANALYTICS.SEGMENT_CUSTOMER_PORTFOLIO(AGE, POLICY_ANNUAL_PREMIUM, CLAIM_AMOUNT_FILLED, POLICY_LENGTH_MONTH) as CUSTOMER_SEGMENT,
     
-    LAST_UPDATED
+    CURRENT_TIMESTAMP() as LAST_UPDATED
     
 FROM ANALYTICS.CUSTOMER_BROKER_CLAIMS_INTEGRATED;
 
@@ -502,251 +506,43 @@ SELECT
         ELSE 'LOW'
     END as FINAL_RISK_LEVEL,
     
-    c.LAST_UPDATED
+    CURRENT_TIMESTAMP() as LAST_UPDATED
     
 FROM ANALYTICS.CUSTOMER_RISK_PROFILE c
 LEFT JOIN ANALYTICS.BROKER_PERFORMANCE_MATRIX b ON c.BROKER_ID = b.BROKER_ID AND c.CUSTOMER_REGION = b.CUSTOMER_REGION;
-
-/* ================================================================================
-AUTOMATED CLASSIFICATION AND TAGGING
-================================================================================
-*/
-
--- Setup governance schema and classification
-USE SCHEMA GOVERNANCE;
-
--- Create classification profile for automated sensitive data detection
-CREATE OR REPLACE SNOWFLAKE.DATA_PRIVACY.CLASSIFICATION_PROFILE INSURANCE_AUTO_CLASSIFICATION(
-    {
-        'minimum_object_age_for_classification_days': 0,
-        'maximum_classification_validity_days': 30,
-        'auto_tag': true
-    }
-);
-
--- Apply classification to analytics schema
-ALTER SCHEMA ANALYTICS SET CLASSIFICATION_PROFILE = 'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION';
-
--- Run classification on intelligence dashboard
-CALL SYSTEM$CLASSIFY(
-    'ANALYTICS.RISK_INTELLIGENCE_DASHBOARD',
-    'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION'
-);
-
--- Classification for broker performance data
-CALL SYSTEM$CLASSIFY(
-    'ANALYTICS.BROKER_PERFORMANCE_MATRIX',
-    'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION'
-);
-
-/* ================================================================================
-PROGRESSIVE GOVERNANCE - MASKING POLICIES
-================================================================================
-*/
-
--- Financial data masking policy
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK AS 
-    (financial_value NUMBER) RETURNS NUMBER ->
-    CASE
-        -- Internal roles get full access
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN financial_value
-        -- Workshop analysts get rounded values
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN FLOOR(financial_value / 5000) * 5000
-        -- External brokers get heavily masked values  
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') OR 
-             CURRENT_ACCOUNT_NAME() LIKE '%CONSUMER%' THEN FLOOR(financial_value / 10000) * 10000
-        ELSE FLOOR(financial_value / 10000) * 10000
-    END
-    COMMENT = 'Progressive masking for financial data based on role and account';
-
--- Broker contact information masking
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.BROKER_CONTACT_MASK AS 
-    (contact_info STRING) RETURNS STRING ->
-    CASE
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN contact_info
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN 
-            REGEXP_REPLACE(contact_info, '(@[^.]+)', '@***')
-        ELSE 'MASKED'
-    END
-    COMMENT = 'Mask broker contact information for external access';
-
--- Performance metrics masking
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.PERFORMANCE_METRICS_MASK AS 
-    (performance_data OBJECT) RETURNS OBJECT ->
-    CASE
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'WORKSHOP_ANALYST') THEN performance_data
-        ELSE OBJECT_CONSTRUCT('masked', true, 'access_level', 'restricted')
-    END
-    COMMENT = 'Mask detailed performance metrics for competitive protection';
-
--- Apply masking policies
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD 
-    MODIFY COLUMN POLICY_ANNUAL_PREMIUM 
-    SET MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK;
-
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD 
-    MODIFY COLUMN CLAIM_AMOUNT_FILLED 
-    SET MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK;
-
-ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
-    MODIFY COLUMN BROKER_PERFORMANCE_ANALYSIS 
-    SET MASKING POLICY GOVERNANCE.PERFORMANCE_METRICS_MASK;
-
-/* ================================================================================
-PROGRESSIVE GOVERNANCE - ROW ACCESS POLICIES
-================================================================================
-*/
-
--- Broker territory access policy
-CREATE OR REPLACE ROW ACCESS POLICY GOVERNANCE.BROKER_TERRITORY_ACCESS AS
-    (customer_region STRING, broker_id STRING) RETURNS BOOLEAN ->
-    CASE
-        -- Internal roles see all regions
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN TRUE
-        -- Workshop analysts see all for demonstration
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN TRUE
-        -- Broker consumers limited to specific regions based on policy context
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') THEN 
-            customer_region IN ('London Region', 'Manchester Region')
-        ELSE FALSE
-    END
-    COMMENT = 'Restrict broker access to assigned geographic territories';
-
--- Performance tier access policy
-CREATE OR REPLACE ROW ACCESS POLICY GOVERNANCE.PERFORMANCE_TIER_ACCESS AS
-    (broker_tier STRING, customer_segment STRING) RETURNS BOOLEAN ->
-    CASE
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'WORKSHOP_ANALYST') THEN TRUE
-        -- External brokers can only see their own tier performance
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') THEN 
-            broker_tier IN ('GOLD', 'SILVER') AND customer_segment NOT LIKE '%PREMIUM%'
-        ELSE FALSE
-    END
-    COMMENT = 'Limit access based on broker performance tier';
-
--- Apply row access policies
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
-    ADD ROW ACCESS POLICY GOVERNANCE.BROKER_TERRITORY_ACCESS ON (CUSTOMER_REGION, BROKER_ID);
-
-ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX
-    ADD ROW ACCESS POLICY GOVERNANCE.PERFORMANCE_TIER_ACCESS ON (BROKER_TIER, 'STANDARD');
-
-/* ================================================================================
-SECURE DATA SHARING
-================================================================================
-*/
-
-USE SCHEMA SHARING;
-
--- Broker portal view for individual broker access
-CREATE OR REPLACE SECURE VIEW SHARING.BROKER_PORTAL_VIEW 
-    COMMENT = 'Individual broker performance and customer portfolio view'
-    AS
-SELECT 
-    b.BROKER_ID,
-    b.BROKER_FIRST_NAME,
-    b.BROKER_LAST_NAME,
-    b.BROKER_TIER,
-    b.TOTAL_CUSTOMERS,
-    b.AVG_CUSTOMER_PREMIUM,
-    b.AVG_CUSTOMER_RISK,
-    r.CUSTOMER_SEGMENT,
-    r.FINAL_RISK_LEVEL,
-    r.POLICY_ANNUAL_PREMIUM,
-    r.CLAIM_AMOUNT_FILLED,
-    r.CUSTOMER_REGION
-FROM ANALYTICS.BROKER_PERFORMANCE_MATRIX b
-LEFT JOIN ANALYTICS.RISK_INTELLIGENCE_DASHBOARD r ON b.BROKER_ID = r.BROKER_ID
-WHERE b.BROKER_ACTIVE = TRUE;
-
--- Regional manager view for territory-wide analytics
-CREATE OR REPLACE SECURE VIEW SHARING.REGIONAL_MANAGER_VIEW 
-    COMMENT = 'Territory-wide analytics for regional management'
-    AS
-SELECT 
-    CUSTOMER_REGION,
-    COUNT(DISTINCT BROKER_ID) as ACTIVE_BROKERS,
-    COUNT(*) as TOTAL_CUSTOMERS,
-    AVG(POLICY_ANNUAL_PREMIUM) as AVG_REGION_PREMIUM,
-    SUM(CLAIM_AMOUNT_FILLED) as TOTAL_REGION_CLAIMS,
-    AVG(CUSTOMER_RISK_SCORE) as AVG_REGION_RISK,
-    COUNT(CASE WHEN FINAL_RISK_LEVEL = 'HIGH' THEN 1 END) as HIGH_RISK_CUSTOMERS
-FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
-GROUP BY CUSTOMER_REGION;
-
--- Executive dashboard view for high-level KPIs
-CREATE OR REPLACE SECURE VIEW SHARING.EXECUTIVE_DASHBOARD_VIEW 
-    COMMENT = 'Executive KPIs without sensitive details'
-    AS
-SELECT 
-    COUNT(DISTINCT BROKER_ID) as TOTAL_BROKERS,
-    COUNT(DISTINCT POLICY_NUMBER) as TOTAL_CUSTOMERS,
-    COUNT(DISTINCT CUSTOMER_REGION) as ACTIVE_REGIONS,
-    AVG(CUSTOMER_RISK_SCORE) as OVERALL_RISK_SCORE,
-    COUNT(CASE WHEN FINAL_RISK_LEVEL = 'HIGH' THEN 1 END) as HIGH_RISK_COUNT,
-    COUNT(CASE WHEN CUSTOMER_SEGMENT LIKE '%PREMIUM%' THEN 1 END) as PREMIUM_CUSTOMERS,
-    MAX(LAST_UPDATED) as LAST_REFRESH
-FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD;
-
--- Create data shares
-CREATE OR REPLACE SHARE BROKER_PORTAL_SHARE
-    COMMENT = 'Individual broker performance data share';
-
-CREATE OR REPLACE SHARE REGIONAL_ANALYTICS_SHARE
-    COMMENT = 'Regional management analytics share';
-
-CREATE OR REPLACE SHARE EXECUTIVE_METRICS_SHARE
-    COMMENT = 'Executive dashboard metrics share';
-
--- Grant access to shares
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE BROKER_PORTAL_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE BROKER_PORTAL_SHARE;
-GRANT SELECT ON VIEW SHARING.BROKER_PORTAL_VIEW TO SHARE BROKER_PORTAL_SHARE;
-
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE REGIONAL_ANALYTICS_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE REGIONAL_ANALYTICS_SHARE;
-GRANT SELECT ON VIEW SHARING.REGIONAL_MANAGER_VIEW TO SHARE REGIONAL_ANALYTICS_SHARE;
-
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE EXECUTIVE_METRICS_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE EXECUTIVE_METRICS_SHARE;
-GRANT SELECT ON VIEW SHARING.EXECUTIVE_DASHBOARD_VIEW TO SHARE EXECUTIVE_METRICS_SHARE;
 
 /* ================================================================================
 GRANT PERMISSIONS FOR WORKSHOP ROLES
 ================================================================================
 */
 
--- Grant access to analytics tables and views
+-- Grant access to analytics tables and UDFs
 GRANT SELECT ON ALL DYNAMIC TABLES IN SCHEMA ANALYTICS TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON ALL VIEWS IN SCHEMA SHARING TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON ALL VIEWS IN SCHEMA SHARING TO ROLE BROKER_CONSUMER;
-
--- Grant function usage
 GRANT USAGE ON ALL FUNCTIONS IN SCHEMA ANALYTICS TO ROLE WORKSHOP_ANALYST;
 
 /* ================================================================================
-ADVANCED ANALYTICS AND GOVERNANCE SETUP COMPLETE
+RISK ANALYTICS SETUP COMPLETE
 ================================================================================
 Implementation Complete:
-• Mixed UDFs: 4 SQL functions + 4 Python functions for optimal performance
-• Dynamic Tables: 3-level architecture with 1-minute refresh rates
-• Analytics: Customer risk profiling, broker performance, territory optimization
-• Classification: Automated PII and financial data discovery
-• Governance: 3 masking policies + 2 row access policies applied
-• Data Sharing: 3 secure shares for different stakeholder groups
+• Mixed UDFs: 4 SQL functions + 4 Python functions for optimal performance balance
+• Dynamic Tables: 3-level architecture with 1-minute refresh rates for real-time insights
+• Analytics Coverage: Customer risk profiling, broker performance, territory optimization
+• Integration Layer: Complete customer-broker-claims data fusion
+• Business Layer: Performance matrices and risk profiling with UDF calculations
+• Intelligence Layer: Advanced Python analytics for predictive insights
 
-Advanced Analytics Delivered:
-• SQL UDFs: High-performance scoring and classification functions
-• Python UDFs: Complex multi-factor analysis and ML-style segmentation  
-• Real-time Intelligence: Sub-minute refresh for business-critical insights
-• Progressive Governance: Role-based access with automated policy enforcement
+Analytics Functions Delivered:
+• SQL UDFs: High-performance risk scoring, tier classification, territory premiums, claim severity
+• Python UDFs: Multi-factor broker analysis, ML-style customer segmentation, risk prediction, territory optimization
+• Real-time Processing: Sub-minute refresh for business-critical analytics
+• Scalable Architecture: Three-level Dynamic Tables design for performance and maintainability
 
-Business Value:
-• Broker Performance: Comprehensive multi-factor analysis with optimization
-• Customer Intelligence: Risk scoring with predictive trajectory modeling
-• Territory Management: Geographic optimization with coverage analysis
-• Secure Collaboration: Governed data sharing across stakeholder groups
+Business Intelligence:
+• Customer Risk Scoring: Age, premium, and claim-based risk assessment
+• Broker Performance Analysis: Comprehensive multi-factor evaluation with tier classification
+• Territory Optimization: Geographic efficiency analysis with actionable recommendations
+• Predictive Analytics: Risk trajectory modeling with confidence levels
 
-Ready for: Phase 4 - Visualization Dashboards and Phase 5 - Workshop Integration
+Ready for: Phase 3 - Governance Implementation and Phase 4 - Visualization Dashboards
 ================================================================================
 */ 
