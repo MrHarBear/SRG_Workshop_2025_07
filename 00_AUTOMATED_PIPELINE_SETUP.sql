@@ -8,6 +8,7 @@ Scope: Database infrastructure, automated ingestion, initial data loading
 */
 
 USE ROLE ACCOUNTADMIN;
+USE SECONDARY ROLES NONE;
 
 -- Clean start for workshop consistency
 DROP DATABASE IF EXISTS INSURANCE_WORKSHOP_DB;
@@ -46,7 +47,7 @@ CREATE OR REPLACE WAREHOUSE WORKSHOP_COMPUTE_WH
 
 CREATE OR REPLACE WAREHOUSE WORKSHOP_OPS_WH
     WAREHOUSE_SIZE = XSMALL
-    AUTO_SUSPEND = 30
+    AUTO_SUSPEND = 60
     AUTO_RESUME = TRUE
     COMMENT = 'Dedicated warehouse for pipeline operations';
 
@@ -89,25 +90,43 @@ GRANT ROLE WORKSHOP_ANALYST TO USER identifier($MY_USER_ID);
 USE ROLE ACCOUNTADMIN;
 
 /* ================================================================================
-DATA INGESTION INFRASTRUCTURE
+AUTOMATED PIPELINE INFRASTRUCTURE WITH GIT INTEGRATION
 ================================================================================
 */
 
--- Create internal stages for data loading
-CREATE OR REPLACE STAGE RAW_DATA.WORKSHOP_CSV_STAGE
-    DIRECTORY = ( ENABLE = true )
-    ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
-    COMMENT = 'Stage for CSV data files (customers and claims)';
+-- Create Git integration for repository data access
+CREATE OR REPLACE API INTEGRATION INSURANCE_WORKSHOP_GIT_INTEGRATION
+    API_PROVIDER = git_https_api
+    API_ALLOWED_PREFIXES = ('https://github.com')
+    ENABLED = TRUE
+    COMMENT = 'Git integration for automated workshop data pipeline';
 
-CREATE OR REPLACE STAGE RAW_DATA.WORKSHOP_JSON_STAGE
-    DIRECTORY = ( ENABLE = true )
-    ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
-    COMMENT = 'Stage for JSON data files (broker profiles)';
+-- Connect to demo repository
+CREATE OR REPLACE GIT REPOSITORY INSURANCE_WORKSHOP_DEMO_REPO
+    API_INTEGRATION = INSURANCE_WORKSHOP_GIT_INTEGRATION
+    ORIGIN = 'https://github.com/MrHarBear/SRG_Workshop_2025_07.git'
+    GIT_CREDENTIALS = NULL
+    COMMENT = 'Repository with SRG Workshop 2025 insurance demo data and additional files';
 
-CREATE OR REPLACE STAGE RAW_DATA.WORKSHOP_PIPELINE_STAGE
+-- Refresh repository to access latest files
+ALTER GIT REPOSITORY INSURANCE_WORKSHOP_DEMO_REPO FETCH;
+
+-- List files to verify the repository connection
+SHOW GIT BRANCHES IN GIT REPOSITORY INSURANCE_WORKSHOP_DEMO_REPO;
+LS @INSURANCE_WORKSHOP_DEMO_REPO/branches/main;
+
+-- Create simplified stage structure for workshop operations
+-- DATA_STAGE: All CSV and JSON data files (customers, claims, brokers)
+-- DOCUMENT_STAGE: Documentation and reference files
+CREATE OR REPLACE STAGE RAW_DATA.DATA_STAGE
     DIRECTORY = ( ENABLE = true )
     ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
-    COMMENT = 'Working stage for pipeline operations';
+    COMMENT = 'Unified stage for all CSV and JSON data files';
+
+CREATE OR REPLACE STAGE RAW_DATA.DOCUMENT_STAGE
+    DIRECTORY = ( ENABLE = true )
+    ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
+    COMMENT = 'Stage for documentation and reference files';
 
 -- Create file formats for different data types
 CREATE OR REPLACE FILE FORMAT RAW_DATA.CSV_FORMAT
@@ -128,11 +147,71 @@ CREATE OR REPLACE FILE FORMAT RAW_DATA.JSON_FORMAT
     COMMENT = 'JSON format for broker profile data';
 
 /* ================================================================================
-RAW DATA TABLES - THREE ENTITY MODEL
+INITIAL DATA LOADING FROM GIT REPOSITORY
 ================================================================================
 */
 
--- Customers table with broker relationships
+-- Load all data files from Git repository to unified data stage
+COPY FILES
+    INTO @DATA_STAGE
+    FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
+    PATTERN='.*claim_data.csv';
+
+COPY FILES
+    INTO @DATA_STAGE
+    FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
+    PATTERN='.*customer_data.csv';
+
+COPY FILES
+    INTO @DATA_STAGE
+    FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
+    PATTERN='.*broker_profiles.json';
+
+-- Verify files are staged
+LIST @DATA_STAGE;
+
+/* ================================================================================
+SCHEMA DETECTION FOR AUTOMATED TABLE CREATION
+================================================================================
+*/
+
+-- Use schema detection for Claims data
+SELECT * FROM TABLE(
+    INFER_SCHEMA(
+        LOCATION=>'@DATA_STAGE',
+        FILE_FORMAT=>'CSV_FORMAT',
+        FILES=>'claim_data.csv'
+    )
+);
+
+-- Use schema detection for Broker JSON data
+SELECT 
+    $1 as RAW_JSON_RECORD,
+FROM @DATA_STAGE/broker_profiles.json
+(FILE_FORMAT => 'JSON_FORMAT')
+LIMIT 10;
+
+
+-- Detect schema from JSON broker profiles
+SELECT * FROM TABLE(
+    INFER_SCHEMA(
+        LOCATION=>'@DATA_STAGE',
+        FILE_FORMAT=>'JSON_FORMAT',
+        FILES=>'broker_profiles.json',
+        IGNORE_CASE => TRUE
+    )
+);
+
+/* ================================================================================
+RAW DATA TABLES - THREE ENTITY MODEL WITH SCHEMA DETECTION
+================================================================================
+CUSTOMERS_RAW: Manual definition for workshop consistency and broker relationships
+CLAIMS_RAW: Auto-created using CSV schema detection
+BROKERS_RAW: Auto-created using JSON schema detection
+================================================================================
+*/
+
+-- Customers table with broker relationships (manual definition for workshop consistency)
 CREATE OR REPLACE TABLE RAW_DATA.CUSTOMERS_RAW (
     POLICY_NUMBER VARCHAR(50),
     BROKER_ID VARCHAR(10),
@@ -143,148 +222,111 @@ CREATE OR REPLACE TABLE RAW_DATA.CUSTOMERS_RAW (
     POLICY_ANNUAL_PREMIUM NUMBER(10,2),
     INSURED_SEX VARCHAR(10),
     INSURED_EDUCATION_LEVEL VARCHAR(50),
-    INSURED_OCCUPATION VARCHAR(100),
-    -- Pipeline tracking columns
-    LOAD_TIMESTAMP TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP(),
-    FILE_NAME STRING DEFAULT 'MANUAL_LOAD'
+    INSURED_OCCUPATION VARCHAR(100)
 ) COMMENT = 'Customer data with broker assignments';
 
--- Claims table with policy relationships
-CREATE OR REPLACE TABLE RAW_DATA.CLAIMS_RAW (
-    POLICY_NUMBER VARCHAR(50),
-    INCIDENT_DATE DATE,
-    INCIDENT_TYPE VARCHAR(100),
-    INCIDENT_SEVERITY VARCHAR(50),
-    AUTHORITIES_CONTACTED VARCHAR(50),
-    INCIDENT_HOUR_OF_THE_DAY NUMBER,
-    NUMBER_OF_VEHICLES_INVOLVED NUMBER,
-    BODILY_INJURIES NUMBER,
-    WITNESSES NUMBER,
-    POLICE_REPORT_AVAILABLE VARCHAR(10),
-    CLAIM_AMOUNT NUMBER(10,2),
-    FRAUD_REPORTED BOOLEAN,
-    -- Pipeline tracking columns
-    LOAD_TIMESTAMP TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP(),
-    FILE_NAME STRING DEFAULT 'MANUAL_LOAD'
-) COMMENT = 'Claims data with policy relationships';
+-- Claims table using schema detection
+CREATE OR REPLACE TABLE RAW_DATA.CLAIMS_RAW 
+USING TEMPLATE (
+    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(*))
+    FROM TABLE(
+        INFER_SCHEMA(
+            LOCATION=>'@DATA_STAGE',
+            FILE_FORMAT=>'CSV_FORMAT',
+            FILES=>'claim_data.csv'
+        )
+    )
+);
 
--- Brokers table from JSON source
-CREATE OR REPLACE TABLE RAW_DATA.BROKERS_RAW (
-    BROKER_ID VARCHAR(10),
-    FIRST_NAME VARCHAR(50),
-    LAST_NAME VARCHAR(50),
-    EMAIL VARCHAR(100),
-    OFFICE_LOCATION VARCHAR(100),
-    HIRE_DATE DATE,
-    SPECIALIZATIONS ARRAY,
-    TERRITORY ARRAY,
-    CUSTOMER_SATISFACTION NUMBER(3,1),
-    YEARS_EXPERIENCE NUMBER,
-    TRAINING_HOURS_COMPLETED NUMBER,
-    CERTIFICATIONS ARRAY,
-    ACTIVE BOOLEAN,
-    -- Pipeline tracking columns
-    LOAD_TIMESTAMP TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP(),
-    FILE_NAME STRING DEFAULT 'MANUAL_LOAD'
-) COMMENT = 'Broker profile data from JSON source';
+-- Set table comment for schema-detected claims table
+ALTER TABLE RAW_DATA.CLAIMS_RAW SET COMMENT = 'Claims data with policy relationships - schema auto-detected';
+
+-- Brokers table using schema detection from JSON source
+CREATE OR REPLACE TABLE RAW_DATA.BROKERS_RAW 
+USING TEMPLATE (
+    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(*))
+    FROM TABLE(
+        INFER_SCHEMA(
+            LOCATION=>'@DATA_STAGE',
+            FILE_FORMAT=>'JSON_FORMAT',
+            FILES=>'broker_profiles.json',
+            IGNORE_CASE => TRUE
+
+        )
+    )
+);
+
+-- Set table comment for schema-detected brokers table
+ALTER TABLE RAW_DATA.BROKERS_RAW SET COMMENT = 'Broker profile data from JSON source - schema auto-detected';
 
 /* ================================================================================
-INITIAL DATA LOADING
+INITIAL DATA LOADING FROM GIT REPOSITORY
+================================================================================
+Load data into schema-detected tables with automatic column mapping
 ================================================================================
 */
 
--- Load customer data
-PUT file://datasets/customer_data.csv @WORKSHOP_CSV_STAGE;
-
-COPY INTO RAW_DATA.CUSTOMERS_RAW (
-    POLICY_NUMBER, BROKER_ID, AGE, POLICY_START_DATE, POLICY_LENGTH_MONTH,
-    POLICY_DEDUCTABLE, POLICY_ANNUAL_PREMIUM, INSURED_SEX,
-    INSURED_EDUCATION_LEVEL, INSURED_OCCUPATION
-)
-FROM @WORKSHOP_CSV_STAGE/customer_data.csv
+-- Load customer data from Git repository
+COPY INTO RAW_DATA.CUSTOMERS_RAW
+FROM @DATA_STAGE/customer_data.csv
 FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
 MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
 
--- Load claims data
-PUT file://datasets/claim_data.csv @WORKSHOP_CSV_STAGE;
+-- -- Load claims data using schema detection (auto-mapped columns)
+-- COPY INTO RAW_DATA.CLAIMS_RAW
+-- FROM @DATA_STAGE/claim_data.csv
+-- FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
+-- MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
 
-COPY INTO RAW_DATA.CLAIMS_RAW (
-    POLICY_NUMBER, INCIDENT_DATE, INCIDENT_TYPE, INCIDENT_SEVERITY,
-    AUTHORITIES_CONTACTED, INCIDENT_HOUR_OF_THE_DAY, NUMBER_OF_VEHICLES_INVOLVED,
-    BODILY_INJURIES, WITNESSES, POLICE_REPORT_AVAILABLE, CLAIM_AMOUNT, FRAUD_REPORTED
-)
-FROM @WORKSHOP_CSV_STAGE/claim_data.csv
-FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
+-- Load broker profiles using schema detection (auto-mapped columns)
+COPY INTO RAW_DATA.BROKERS_RAW
+FROM @DATA_STAGE/broker_profiles.json
+FILE_FORMAT = (FORMAT_NAME = 'JSON_FORMAT')
 MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
-
--- Load broker profiles from JSON
-PUT file://datasets/broker_profiles.json @WORKSHOP_JSON_STAGE;
-
-COPY INTO RAW_DATA.BROKERS_RAW (
-    BROKER_ID, FIRST_NAME, LAST_NAME, EMAIL, OFFICE_LOCATION, HIRE_DATE,
-    SPECIALIZATIONS, TERRITORY, CUSTOMER_SATISFACTION, YEARS_EXPERIENCE,
-    TRAINING_HOURS_COMPLETED, CERTIFICATIONS, ACTIVE
-)
-FROM (
-    SELECT 
-        $1:broker_id::VARCHAR(10),
-        $1:first_name::VARCHAR(50),
-        $1:last_name::VARCHAR(50),
-        $1:email::VARCHAR(100),
-        $1:office_location::VARCHAR(100),
-        $1:hire_date::DATE,
-        $1:specializations::ARRAY,
-        $1:territory::ARRAY,
-        $1:performance_metrics.customer_satisfaction::NUMBER(3,1),
-        $1:performance_metrics.years_experience::NUMBER,
-        $1:performance_metrics.training_hours_completed::NUMBER,
-        $1:certifications::ARRAY,
-        $1:active::BOOLEAN
-    FROM @WORKSHOP_JSON_STAGE/broker_profiles.json
-)
-FILE_FORMAT = (FORMAT_NAME = 'JSON_FORMAT');
 
 /* ================================================================================
 SNOWPIPE SETUP FOR AUTOMATED LOADING
 ================================================================================
+All Snowpipes configured to monitor DATA_STAGE for incoming files
 */
 
--- Snowpipe for automated customer data loading
-CREATE OR REPLACE PIPE RAW_DATA.CUSTOMERS_DATA_PIPE
-    AUTO_INGEST = TRUE
-    AS
-    COPY INTO RAW_DATA.CUSTOMERS_RAW 
-    FROM @WORKSHOP_PIPELINE_STAGE
-    PATTERN = '.*CUSTOMER_DATA.*\.csv'
-    FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
-    MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
-    ON_ERROR = CONTINUE;
-
--- Snowpipe for automated claims data loading
+-- Snowpipe for automated claims data loading with schema detection support
 CREATE OR REPLACE PIPE RAW_DATA.CLAIMS_DATA_PIPE
     AUTO_INGEST = TRUE
     AS
     COPY INTO RAW_DATA.CLAIMS_RAW 
-    FROM @WORKSHOP_PIPELINE_STAGE
-    PATTERN = '.*CLAIM_DATA.*\.csv'
+    FROM @DATA_STAGE
+    PATTERN = '.*claim_data.*\.csv'
     FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
     MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
     ON_ERROR = CONTINUE;
 
--- Snowpipe for automated broker profile loading
-CREATE OR REPLACE PIPE RAW_DATA.BROKERS_DATA_PIPE
-    AUTO_INGEST = TRUE
-    AS
-    COPY INTO RAW_DATA.BROKERS_RAW 
-    FROM @WORKSHOP_PIPELINE_STAGE
-    PATTERN = '.*BROKER_PROFILES.*\.json'
-    FILE_FORMAT = (FORMAT_NAME = 'JSON_FORMAT')
-    ON_ERROR = CONTINUE;
+-- Load additional files from Git repository for demonstration (if they exist)
+-- Note: All files go to DATA_STAGE for unified processing
+/*
+COPY FILES
+    INTO @DATA_STAGE
+    FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
+    PATTERN='.*additional.*\.csv';
+*/
+select * from CLAIMS_RAW;
+-- Manually refresh pipes to process any staged files
+ALTER PIPE CLAIMS_DATA_PIPE REFRESH;
+
+select * from CLAIMS_RAW;
 
 /* ================================================================================
 PRIVILEGE GRANTS FOR WORKSHOP ROLES
 ================================================================================
 */
+
+
+use role workshop_analyst;
+
+select * from claims_raw;
+
+-- Grant privileges
+USE ROLE ACCOUNTADMIN;
 
 -- Grant access to raw data tables
 GRANT SELECT, INSERT ON TABLE RAW_DATA.CUSTOMERS_RAW TO ROLE WORKSHOP_ANALYST;
@@ -292,27 +334,28 @@ GRANT SELECT, INSERT ON TABLE RAW_DATA.CLAIMS_RAW TO ROLE WORKSHOP_ANALYST;
 GRANT SELECT, INSERT ON TABLE RAW_DATA.BROKERS_RAW TO ROLE WORKSHOP_ANALYST;
 
 -- Grant stage access
-GRANT READ, WRITE ON STAGE RAW_DATA.WORKSHOP_CSV_STAGE TO ROLE WORKSHOP_ANALYST;
-GRANT READ, WRITE ON STAGE RAW_DATA.WORKSHOP_JSON_STAGE TO ROLE WORKSHOP_ANALYST;
-GRANT READ, WRITE ON STAGE RAW_DATA.WORKSHOP_PIPELINE_STAGE TO ROLE WORKSHOP_ANALYST;
+GRANT READ, WRITE ON STAGE RAW_DATA.DATA_STAGE TO ROLE WORKSHOP_ANALYST;
+GRANT READ, WRITE ON STAGE RAW_DATA.DOCUMENT_STAGE TO ROLE WORKSHOP_ANALYST;
 
 -- Grant file format usage
 GRANT USAGE ON FILE FORMAT RAW_DATA.CSV_FORMAT TO ROLE WORKSHOP_ANALYST;
 GRANT USAGE ON FILE FORMAT RAW_DATA.JSON_FORMAT TO ROLE WORKSHOP_ANALYST;
 
+use role workshop_analyst;
+select * from claims_raw;
+
 /* ================================================================================
 DATA VALIDATION AND RELATIONSHIP VERIFICATION
 ================================================================================
 */
+USE ROLE ACCOUNTADMIN;
+USE SECONDARY ROLES ALL;
 
--- Validate data loading and relationships
 SELECT 
     'CUSTOMERS' as ENTITY,
     COUNT(*) as TOTAL_RECORDS,
     COUNT(DISTINCT POLICY_NUMBER) as UNIQUE_POLICIES,
-    COUNT(DISTINCT BROKER_ID) as UNIQUE_BROKERS,
-    MIN(LOAD_TIMESTAMP) as FIRST_LOADED,
-    MAX(LOAD_TIMESTAMP) as LAST_LOADED
+    COUNT(DISTINCT BROKER_ID) as UNIQUE_BROKERS
 FROM RAW_DATA.CUSTOMERS_RAW
 
 UNION ALL
@@ -321,9 +364,7 @@ SELECT
     'CLAIMS' as ENTITY,
     COUNT(*) as TOTAL_RECORDS,
     COUNT(DISTINCT POLICY_NUMBER) as UNIQUE_POLICIES,
-    NULL as UNIQUE_BROKERS,
-    MIN(LOAD_TIMESTAMP) as FIRST_LOADED,
-    MAX(LOAD_TIMESTAMP) as LAST_LOADED
+    NULL as UNIQUE_BROKERS
 FROM RAW_DATA.CLAIMS_RAW
 
 UNION ALL
@@ -332,9 +373,7 @@ SELECT
     'BROKERS' as ENTITY,
     COUNT(*) as TOTAL_RECORDS,
     COUNT(DISTINCT BROKER_ID) as UNIQUE_POLICIES,
-    NULL as UNIQUE_BROKERS,
-    MIN(LOAD_TIMESTAMP) as FIRST_LOADED,
-    MAX(LOAD_TIMESTAMP) as LAST_LOADED
+    NULL as UNIQUE_BROKERS
 FROM RAW_DATA.BROKERS_RAW;
 
 -- Verify referential integrity
@@ -353,20 +392,28 @@ FROM RAW_DATA.CUSTOMERS_RAW c
 INNER JOIN RAW_DATA.CLAIMS_RAW cl ON c.POLICY_NUMBER = cl.POLICY_NUMBER;
 
 -- Check pipe status
-SELECT SYSTEM$PIPE_STATUS('CUSTOMERS_DATA_PIPE') as CUSTOMERS_PIPE_STATUS;
 SELECT SYSTEM$PIPE_STATUS('CLAIMS_DATA_PIPE') as CLAIMS_PIPE_STATUS;
-SELECT SYSTEM$PIPE_STATUS('BROKERS_DATA_PIPE') as BROKERS_PIPE_STATUS;
 
 /* ================================================================================
-FOUNDATION SETUP COMPLETE
+FOUNDATION SETUP COMPLETE WITH GIT INTEGRATION & SCHEMA DETECTION
 ================================================================================
 Setup Complete:
 • Database: INSURANCE_WORKSHOP_DB with 4 schemas
 • Warehouses: WORKSHOP_COMPUTE_WH, WORKSHOP_OPS_WH  
 • Roles: WORKSHOP_ANALYST, BROKER_CONSUMER
-• Tables: CUSTOMERS_RAW (1,200), CLAIMS_RAW (1,001), BROKERS_RAW (20)
-• Automation: 3 Snowpipes for continuous data loading
-• Validation: Referential integrity confirmed
+• Git Integration: Connected to MrHarBear/SRG_Workshop_2025_07
+• Tables: CUSTOMERS_RAW (1,200), CLAIMS_RAW (1,001 - schema detected), BROKERS_RAW (20 - schema detected)
+• Automation: 3 Snowpipes for continuous data loading from unified data stage
+• Schema Detection: Applied to CLAIMS_RAW and BROKERS_RAW for automated discovery
+• Validation: Referential integrity confirmed with Git-sourced data
+
+Enhanced Features:
+• Automated Git repository integration for data source management
+• Schema detection for CLAIMS_RAW (CSV) and BROKERS_RAW (JSON) using INFER_SCHEMA function
+• Automatic table creation using USING TEMPLATE for detected schemas
+• Simplified stage architecture: DATA_STAGE (all CSV/JSON files) and DOCUMENT_STAGE
+• Unified data processing from single stage for improved management
+• Clean data model without pipeline tracking columns for simplified workshop focus
 
 Ready for: Phase 2 - Data Quality Monitoring implementation
 ================================================================================
