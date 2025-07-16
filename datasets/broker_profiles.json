@@ -1,0 +1,342 @@
+[
+  {
+    "broker_id": "BRK001",
+    "first_name": "James",
+    "last_name": "Mitchell",
+    "email": "j.mitchell@specialistrisk.com",
+    "office_location": "London",
+    "hire_date": "2018-03-15",
+    "specializations": ["Motor Fleet", "Commercial Vehicle"],
+    "territory": ["Greater London", "South East England"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.7,
+      "years_experience": 12,
+      "training_hours_completed": 45
+    },
+    "certifications": ["CII", "ACII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK002", 
+    "first_name": "Sarah",
+    "last_name": "Johnson",
+    "email": "s.johnson@specialistrisk.com",
+    "office_location": "Manchester",
+    "hire_date": "2020-07-22",
+    "specializations": ["Private Client", "High Value Motor"],
+    "territory": ["North West England", "North Wales"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.9,
+      "years_experience": 8,
+      "training_hours_completed": 38
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK003",
+    "first_name": "David",
+    "last_name": "Thompson", 
+    "email": "d.thompson@specialistrisk.com",
+    "office_location": "Birmingham",
+    "hire_date": "2015-11-08",
+    "specializations": ["Commercial Motor", "Fleet Management"],
+    "territory": ["Midlands", "West England"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.5,
+      "years_experience": 15,
+      "training_hours_completed": 52
+    },
+    "certifications": ["CII", "ACII", "Dip CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK004",
+    "first_name": "Emma",
+    "last_name": "Davies",
+    "email": "e.davies@specialistrisk.com",
+    "office_location": "London", 
+    "hire_date": "2019-09-12",
+    "specializations": ["Private Client", "Personal Lines"],
+    "territory": ["Central London", "Surrey"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.8,
+      "years_experience": 6,
+      "training_hours_completed": 41
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK005",
+    "first_name": "Michael",
+    "last_name": "Brown",
+    "email": "m.brown@specialistrisk.com",
+    "office_location": "Edinburgh",
+    "hire_date": "2017-01-30",
+    "specializations": ["Commercial Motor", "Fleet Risk"],
+    "territory": ["Scotland", "Northern England"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.6,
+      "years_experience": 10,
+      "training_hours_completed": 48
+    },
+    "certifications": ["CII", "ACII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK006",
+    "first_name": "Rachel",
+    "last_name": "Wilson",
+    "email": "r.wilson@specialistrisk.com",
+    "office_location": "Bristol",
+    "hire_date": "2021-02-14",
+    "specializations": ["Motor Trade", "Commercial Vehicle"],
+    "territory": ["South West England", "Wales"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.4,
+      "years_experience": 4,
+      "training_hours_completed": 35
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK007",
+    "first_name": "Andrew",
+    "last_name": "Taylor",
+    "email": "a.taylor@specialistrisk.com",
+    "office_location": "Leeds",
+    "hire_date": "2016-08-03",
+    "specializations": ["Fleet Insurance", "Commercial Lines"],
+    "territory": ["Yorkshire", "North East England"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.6,
+      "years_experience": 9,
+      "training_hours_completed": 44
+    },
+    "certifications": ["CII", "ACII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK008",
+    "first_name": "Helen",
+    "last_name": "Clark",
+    "email": "h.clark@specialistrisk.com",
+    "office_location": "Nottingham",
+    "hire_date": "2019-04-25",
+    "specializations": ["Private Motor", "Personal Lines"],
+    "territory": ["East Midlands", "Lincolnshire"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.7,
+      "years_experience": 7,
+      "training_hours_completed": 39
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK009",
+    "first_name": "Simon",
+    "last_name": "Roberts",
+    "email": "s.roberts@specialistrisk.com",
+    "office_location": "Cambridge",
+    "hire_date": "2014-12-11",
+    "specializations": ["High Value Motor", "Specialist Vehicles"],
+    "territory": ["East England", "Essex"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.8,
+      "years_experience": 11,
+      "training_hours_completed": 49
+    },
+    "certifications": ["CII", "ACII", "Dip CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK010",
+    "first_name": "Louise",
+    "last_name": "Evans",
+    "email": "l.evans@specialistrisk.com",
+    "office_location": "Cardiff",
+    "hire_date": "2020-10-08",
+    "specializations": ["Commercial Motor", "Fleet Risk"],
+    "territory": ["Wales", "Herefordshire"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.5,
+      "years_experience": 5,
+      "training_hours_completed": 36
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK011",
+    "first_name": "Robert",
+    "last_name": "Green",
+    "email": "r.green@specialistrisk.com",
+    "office_location": "Southampton",
+    "hire_date": "2017-06-19",
+    "specializations": ["Motor Trade", "Commercial Vehicle"],
+    "territory": ["Hampshire", "Dorset"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.6,
+      "years_experience": 8,
+      "training_hours_completed": 42
+    },
+    "certifications": ["CII", "ACII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK012",
+    "first_name": "Claire",
+    "last_name": "Adams",
+    "email": "c.adams@specialistrisk.com",
+    "office_location": "Newcastle",
+    "hire_date": "2018-11-22",
+    "specializations": ["Private Client", "High Value Motor"],
+    "territory": ["Northumberland", "Cumbria"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.7,
+      "years_experience": 7,
+      "training_hours_completed": 40
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK013",
+    "first_name": "Paul",
+    "last_name": "Harris",
+    "email": "p.harris@specialistrisk.com",
+    "office_location": "Plymouth",
+    "hire_date": "2015-03-07",
+    "specializations": ["Fleet Insurance", "Commercial Lines"],
+    "territory": ["Devon", "Cornwall"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.4,
+      "years_experience": 12,
+      "training_hours_completed": 47
+    },
+    "certifications": ["CII", "ACII", "Dip CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK014",
+    "first_name": "Amanda",
+    "last_name": "Walker",
+    "email": "a.walker@specialistrisk.com",
+    "office_location": "Reading",
+    "hire_date": "2021-05-16",
+    "specializations": ["Private Motor", "Personal Lines"],
+    "territory": ["Berkshire", "Oxfordshire"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.8,
+      "years_experience": 4,
+      "training_hours_completed": 33
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK015",
+    "first_name": "Mark",
+    "last_name": "Turner",
+    "email": "m.turner@specialistrisk.com",
+    "office_location": "Preston",
+    "hire_date": "2016-01-28",
+    "specializations": ["Commercial Motor", "Fleet Management"],
+    "territory": ["Lancashire", "Merseyside"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.5,
+      "years_experience": 10,
+      "training_hours_completed": 46
+    },
+    "certifications": ["CII", "ACII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK016",
+    "first_name": "Jennifer",
+    "last_name": "Phillips",
+    "email": "j.phillips@specialistrisk.com",
+    "office_location": "Ipswich",
+    "hire_date": "2019-08-14",
+    "specializations": ["Motor Trade", "Specialist Vehicles"],
+    "territory": ["Suffolk", "Norfolk"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.6,
+      "years_experience": 6,
+      "training_hours_completed": 37
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK017",
+    "first_name": "Christopher",
+    "last_name": "Campbell",
+    "email": "c.campbell@specialistrisk.com",
+    "office_location": "Gloucester",
+    "hire_date": "2017-09-30",
+    "specializations": ["Fleet Insurance", "Commercial Lines"],
+    "territory": ["Gloucestershire", "Worcestershire"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.7,
+      "years_experience": 8,
+      "training_hours_completed": 43
+    },
+    "certifications": ["CII", "ACII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK018",
+    "first_name": "Victoria",
+    "last_name": "Parker",
+    "email": "v.parker@specialistrisk.com",
+    "office_location": "Canterbury",
+    "hire_date": "2020-12-05",
+    "specializations": ["Private Client", "High Value Motor"],
+    "territory": ["Kent", "East Sussex"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.9,
+      "years_experience": 5,
+      "training_hours_completed": 34
+    },
+    "certifications": ["CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK019",
+    "first_name": "Daniel",
+    "last_name": "Cooper",
+    "email": "d.cooper@specialistrisk.com",
+    "office_location": "Stoke-on-Trent",
+    "hire_date": "2015-07-13",
+    "specializations": ["Commercial Motor", "Fleet Risk"],
+    "territory": ["Staffordshire", "Shropshire"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.4,
+      "years_experience": 11,
+      "training_hours_completed": 50
+    },
+    "certifications": ["CII", "ACII", "Dip CII"],
+    "active": true
+  },
+  {
+    "broker_id": "BRK020",
+    "first_name": "Katherine",
+    "last_name": "Morgan",
+    "email": "k.morgan@specialistrisk.com",
+    "office_location": "Inverness",
+    "hire_date": "2018-04-02",
+    "specializations": ["Private Motor", "Personal Lines"],
+    "territory": ["Highlands", "Islands"],
+    "performance_metrics": {
+      "customer_satisfaction": 4.6,
+      "years_experience": 7,
+      "training_hours_completed": 41
+    },
+    "certifications": ["CII"],
+    "active": true
+  }
+] 
