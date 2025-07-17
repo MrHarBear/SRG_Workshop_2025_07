@@ -29,373 +29,166 @@ CREATE OR REPLACE SNOWFLAKE.DATA_PRIVACY.CLASSIFICATION_PROFILE INSURANCE_AUTO_C
 -- Apply classification to analytics schema
 ALTER SCHEMA ANALYTICS SET CLASSIFICATION_PROFILE = 'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION';
 
--- Run classification on key analytics tables
-CALL SYSTEM$CLASSIFY(
-    'ANALYTICS.RISK_INTELLIGENCE_DASHBOARD',
-    'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION'
-);
-
 CALL SYSTEM$CLASSIFY(
     'ANALYTICS.BROKER_PERFORMANCE_MATRIX',
     'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION'
 );
 
-CALL SYSTEM$CLASSIFY(
-    'ANALYTICS.CUSTOMER_RISK_PROFILE',
-    'GOVERNANCE.INSURANCE_AUTO_CLASSIFICATION'
-);
+-- View classification results
+SELECT SYSTEM$GET_CLASSIFICATION_RESULT('ANALYTICS.BROKER_PERFORMANCE_MATRIX');
 
+SELECT *
+FROM TABLE(
+  INFORMATION_SCHEMA.TAG_REFERENCES_ALL_COLUMNS(
+    'ANALYTICS.BROKER_PERFORMANCE_MATRIX',
+    'table'
+));
 /* ================================================================================
 PROGRESSIVE GOVERNANCE - MASKING POLICIES
 ================================================================================
 */
 
--- Financial data masking policy with progressive access levels
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK AS 
+-- Mask competitive financial data (premium volumes)
+CREATE OR REPLACE MASKING POLICY GOVERNANCE.COMPETITIVE_FINANCIAL_MASK AS 
     (financial_value NUMBER) RETURNS NUMBER ->
     CASE
-        -- Internal admin roles get full access
+        -- Internal admin and analysts see full values
         WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN financial_value
-        -- Workshop analysts get rounded values for demonstration purposes
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN FLOOR(financial_value / 5000) * 5000
-        -- External brokers get heavily masked values for competitive protection
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') OR 
-             CURRENT_ACCOUNT_NAME() LIKE '%CONSUMER%' THEN FLOOR(financial_value / 10000) * 10000
-        -- Default to highest masking level
+        -- External brokers see rounded values for competitive protection
+        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') 
+        -- Future: Consumer accounts will see masked values (uncomment during workshop)
+        -- OR CURRENT_ACCOUNT_NAME() LIKE '%DATASHARING_CONSUMER%'
+        THEN FLOOR(financial_value / 10000) * 10000
         ELSE FLOOR(financial_value / 10000) * 10000
     END
-    COMMENT = 'Progressive masking for financial data based on role and account context';
+    COMMENT = 'Mask competitive financial data for external broker access';
 
--- Broker contact information masking policy
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.BROKER_CONTACT_MASK AS 
-    (contact_info STRING) RETURNS STRING ->
-    CASE
-        -- Full access for internal administration
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN contact_info
-        -- Partial masking for workshop analysts (mask domain but keep structure)
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN 
-            REGEXP_REPLACE(contact_info, '(@[^.]+)', '@***')
-        -- Complete masking for external access
-        ELSE 'MASKED'
-    END
-    COMMENT = 'Mask broker contact information for external access while preserving internal operations';
-
--- Performance metrics masking for competitive protection
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.PERFORMANCE_METRICS_MASK AS 
+-- Mask detailed performance analytics
+CREATE OR REPLACE MASKING POLICY GOVERNANCE.PERFORMANCE_ANALYTICS_MASK AS 
     (performance_data OBJECT) RETURNS OBJECT ->
     CASE
-        -- Internal roles get full performance analytics
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'WORKSHOP_ANALYST') THEN performance_data
-        -- External access gets masked indicators only
-        ELSE OBJECT_CONSTRUCT('masked', true, 'access_level', 'restricted')
+        -- Internal roles see full performance breakdown
+        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN performance_data
+        -- External brokers see simplified performance indicator
+        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') 
+        -- Future: Consumer accounts will see masked version (uncomment during workshop)
+        -- OR CURRENT_ACCOUNT_NAME() LIKE '%DATASHARING_CONSUMER%'  
+        THEN OBJECT_CONSTRUCT('performance_tier', performance_data:performance_tier, 'access_level', 'external_view')
+        ELSE OBJECT_CONSTRUCT('masked', TRUE, 'access_level', 'restricted')
     END
-    COMMENT = 'Mask detailed performance metrics for competitive protection';
+    COMMENT = 'Mask detailed performance analytics for competitive protection';
 
--- Personal information masking for privacy compliance
-CREATE OR REPLACE MASKING POLICY GOVERNANCE.PERSONAL_INFO_MASK AS 
-    (personal_data STRING) RETURNS STRING ->
-    CASE
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN personal_data
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN 
-            CASE 
-                WHEN personal_data IS NULL THEN NULL
-                WHEN LENGTH(personal_data) <= 3 THEN '***'
-                ELSE CONCAT(LEFT(personal_data, 2), REPEAT('*', LENGTH(personal_data) - 2))
-            END
-        ELSE 'REDACTED'
-    END
-    COMMENT = 'Privacy-compliant masking for personal information';
-
--- Apply masking policies to analytics tables
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD 
-    MODIFY COLUMN POLICY_ANNUAL_PREMIUM 
-    SET MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK;
-
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD 
-    MODIFY COLUMN CLAIM_AMOUNT_FILLED 
-    SET MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK;
-
+-- Apply masking policies to broker performance table
 ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
-    MODIFY COLUMN BROKER_PERFORMANCE_ANALYSIS 
-    SET MASKING POLICY GOVERNANCE.PERFORMANCE_METRICS_MASK;
+    MODIFY COLUMN TOTAL_PREMIUM_VOLUME 
+    SET MASKING POLICY GOVERNANCE.COMPETITIVE_FINANCIAL_MASK;
 
 ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
     MODIFY COLUMN AVG_CUSTOMER_PREMIUM 
-    SET MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK;
+    SET MASKING POLICY GOVERNANCE.COMPETITIVE_FINANCIAL_MASK;
 
 ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
-    MODIFY COLUMN TOTAL_PREMIUM_VOLUME 
-    SET MASKING POLICY GOVERNANCE.FINANCIAL_DATA_MASK;
+    MODIFY COLUMN BROKER_PERFORMANCE_ANALYSIS 
+    SET MASKING POLICY GOVERNANCE.PERFORMANCE_ANALYTICS_MASK;
+
+
+
+select * from ANALYTICS.BROKER_PERFORMANCE_MATRIX; 
+use role WORKSHOP_ANALYST;
+select * from ANALYTICS.BROKER_PERFORMANCE_MATRIX; 
+use role accountadmin;
 
 /* ================================================================================
-PROGRESSIVE GOVERNANCE - ROW ACCESS POLICIES
+STEP 3: ROW ACCESS POLICY
 ================================================================================
 */
 
--- Broker territory access policy for geographic restrictions
-CREATE OR REPLACE ROW ACCESS POLICY GOVERNANCE.BROKER_TERRITORY_ACCESS AS
-    (customer_region STRING, broker_id STRING) RETURNS BOOLEAN ->
+-- Ensure brokers can only see their own performance data
+CREATE OR REPLACE ROW ACCESS POLICY GOVERNANCE.BROKER_ISOLATION_POLICY AS
+    (broker_id STRING) RETURNS BOOLEAN ->
     CASE
-        -- Internal admin roles see all regions for oversight
+        -- Internal roles see all brokers for oversight
         WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN') THEN TRUE
-        -- Workshop analysts see all regions for demonstration purposes
-        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST') THEN TRUE
-        -- Broker consumers limited to specific regions based on business rules
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') THEN 
-            customer_region IN ('London Region', 'Manchester Region')
-        -- Default to no access
-        ELSE FALSE
+        -- External brokers only see their own performance
+        WHEN CURRENT_ROLE() IN ('WORKSHOP_ANALYST')  
+        -- Future: Consumer accounts will have restricted access (modify during workshop)
+        OR CURRENT_ACCOUNT_NAME() LIKE '%DATASHARING_CONSUMER%' 
+        THEN broker_id IN ('BRK001', 'BRK002', 'BRK003')
+        ELSE TRUE
     END
-    COMMENT = 'Restrict broker access to assigned geographic territories';
+    COMMENT = 'Isolate broker performance data - brokers see only their own records';
 
--- Performance tier access policy for competitive protection
-CREATE OR REPLACE ROW ACCESS POLICY GOVERNANCE.PERFORMANCE_TIER_ACCESS AS
-    (broker_tier STRING, customer_segment STRING) RETURNS BOOLEAN ->
-    CASE
-        -- Internal roles have unrestricted access
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'WORKSHOP_ANALYST') THEN TRUE
-        -- External brokers can only see specific tiers and segments
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') THEN 
-            broker_tier IN ('GOLD', 'SILVER') AND customer_segment NOT LIKE '%PREMIUM%'
-        -- Default to restricted access
-        ELSE FALSE
-    END
-    COMMENT = 'Limit access based on broker performance tier and customer segment sensitivity';
-
--- Risk level access policy for data sensitivity
-CREATE OR REPLACE ROW ACCESS POLICY GOVERNANCE.RISK_LEVEL_ACCESS AS
-    (final_risk_level STRING, customer_segment STRING) RETURNS BOOLEAN ->
-    CASE
-        -- Internal roles see all risk levels
-        WHEN CURRENT_ROLE() IN ('ACCOUNTADMIN', 'WORKSHOP_ANALYST') THEN TRUE
-        -- External access limited to non-sensitive risk data
-        WHEN CURRENT_ROLE() IN ('BROKER_CONSUMER') THEN 
-            final_risk_level IN ('LOW', 'MEDIUM') AND customer_segment NOT LIKE '%PREMIUM%'
-        ELSE FALSE
-    END
-    COMMENT = 'Control access to sensitive risk assessment data';
-
--- Apply row access policies to analytics tables
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
-    ADD ROW ACCESS POLICY GOVERNANCE.BROKER_TERRITORY_ACCESS ON (CUSTOMER_REGION, BROKER_ID);
-
-ALTER TABLE ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
-    ADD ROW ACCESS POLICY GOVERNANCE.RISK_LEVEL_ACCESS ON (FINAL_RISK_LEVEL, CUSTOMER_SEGMENT);
-
+-- Apply row access policy to broker performance table
 ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX
-    ADD ROW ACCESS POLICY GOVERNANCE.PERFORMANCE_TIER_ACCESS ON (BROKER_TIER, 'STANDARD');
+    ADD ROW ACCESS POLICY GOVERNANCE.BROKER_ISOLATION_POLICY ON (BROKER_ID);
+
+select * from ANALYTICS.BROKER_PERFORMANCE_MATRIX;
+use role workshop_analyst;
+select * from ANALYTICS.BROKER_PERFORMANCE_MATRIX;
+use role accountadmin;
 
 /* ================================================================================
-SECURE DATA SHARING ARCHITECTURE
+STEP 4: SECURE DATA PRODUCT FOR SHARING
 ================================================================================
 */
 
 USE SCHEMA SHARING;
 
--- Broker portal view for individual broker access with governance
-CREATE OR REPLACE SECURE VIEW SHARING.BROKER_PORTAL_VIEW 
-    COMMENT = 'Individual broker performance and customer portfolio view with applied governance'
+-- Create broker portal view with governance controls applied
+CREATE OR REPLACE SECURE VIEW SHARING.BROKER_PERFORMANCE_PORTAL 
+    COMMENT = 'Governed broker performance data product for external sharing'
     AS
 SELECT 
-    b.BROKER_ID,
-    b.BROKER_FIRST_NAME,
-    b.BROKER_LAST_NAME,
-    b.BROKER_TIER,
-    b.TOTAL_CUSTOMERS,
-    b.AVG_CUSTOMER_PREMIUM,
-    b.AVG_CUSTOMER_RISK,
-    r.CUSTOMER_SEGMENT,
-    r.FINAL_RISK_LEVEL,
-    r.POLICY_ANNUAL_PREMIUM,
-    r.CLAIM_AMOUNT_FILLED,
-    r.CUSTOMER_REGION,
-    r.LAST_UPDATED
-FROM ANALYTICS.BROKER_PERFORMANCE_MATRIX b
-LEFT JOIN ANALYTICS.RISK_INTELLIGENCE_DASHBOARD r ON b.BROKER_ID = r.BROKER_ID
-WHERE b.BROKER_ACTIVE = TRUE;
+    BROKER_ID,
+    BROKER_FIRST_NAME,
+    BROKER_LAST_NAME,
+    BROKER_TIER,
+    TOTAL_CUSTOMERS,
+    AVG_CUSTOMER_PREMIUM,      -- Masked for competitive protection
+    AVG_CUSTOMER_RISK,
+    TOTAL_PREMIUM_VOLUME,      -- Masked for competitive protection
+    BROKER_PERFORMANCE_ANALYSIS, -- Masked to show only tier
+    BROKER_ACTIVE,
+    CURRENT_TIMESTAMP() as DATA_ACCESS_TIME
+FROM ANALYTICS.BROKER_PERFORMANCE_MATRIX
+WHERE BROKER_ACTIVE = TRUE;
 
--- Regional manager view for territory-wide analytics
-CREATE OR REPLACE SECURE VIEW SHARING.REGIONAL_MANAGER_VIEW 
-    COMMENT = 'Territory-wide analytics for regional management with aggregated data'
-    AS
-SELECT 
-    CUSTOMER_REGION,
-    COUNT(DISTINCT BROKER_ID) as ACTIVE_BROKERS,
-    COUNT(*) as TOTAL_CUSTOMERS,
-    AVG(POLICY_ANNUAL_PREMIUM) as AVG_REGION_PREMIUM,
-    SUM(CLAIM_AMOUNT_FILLED) as TOTAL_REGION_CLAIMS,
-    AVG(CUSTOMER_RISK_SCORE) as AVG_REGION_RISK,
-    COUNT(CASE WHEN FINAL_RISK_LEVEL = 'HIGH' THEN 1 END) as HIGH_RISK_CUSTOMERS,
-    COUNT(CASE WHEN CUSTOMER_SEGMENT LIKE '%PREMIUM%' THEN 1 END) as PREMIUM_CUSTOMERS,
-    MAX(LAST_UPDATED) as LAST_REFRESH
-FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
-GROUP BY CUSTOMER_REGION;
-
--- Executive dashboard view for high-level KPIs without sensitive details
-CREATE OR REPLACE SECURE VIEW SHARING.EXECUTIVE_DASHBOARD_VIEW 
-    COMMENT = 'Executive KPIs without sensitive operational details'
-    AS
-SELECT 
-    COUNT(DISTINCT BROKER_ID) as TOTAL_BROKERS,
-    COUNT(DISTINCT POLICY_NUMBER) as TOTAL_CUSTOMERS,
-    COUNT(DISTINCT CUSTOMER_REGION) as ACTIVE_REGIONS,
-    AVG(CUSTOMER_RISK_SCORE) as OVERALL_RISK_SCORE,
-    COUNT(CASE WHEN FINAL_RISK_LEVEL = 'HIGH' THEN 1 END) as HIGH_RISK_COUNT,
-    COUNT(CASE WHEN FINAL_RISK_LEVEL = 'MEDIUM' THEN 1 END) as MEDIUM_RISK_COUNT,
-    COUNT(CASE WHEN FINAL_RISK_LEVEL = 'LOW' THEN 1 END) as LOW_RISK_COUNT,
-    COUNT(CASE WHEN CUSTOMER_SEGMENT LIKE '%PREMIUM%' THEN 1 END) as PREMIUM_CUSTOMERS,
-    AVG(CASE WHEN CUSTOMER_SEGMENT LIKE '%PREMIUM%' THEN POLICY_ANNUAL_PREMIUM END) as AVG_PREMIUM_VALUE,
-    MAX(LAST_UPDATED) as LAST_REFRESH
-FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD;
-
--- Data quality summary view for governance monitoring
-CREATE OR REPLACE SECURE VIEW SHARING.GOVERNANCE_MONITORING_VIEW 
-    COMMENT = 'Data governance and quality monitoring summary'
-    AS
-SELECT 
-    'ANALYTICS_TABLES' as MONITORING_CATEGORY,
-    COUNT(*) as TOTAL_OBJECTS,
-    'ACTIVE' as STATUS,
-    CURRENT_TIMESTAMP() as LAST_CHECK
-FROM INFORMATION_SCHEMA.TABLES
-WHERE TABLE_SCHEMA = 'ANALYTICS' AND TABLE_TYPE = 'DYNAMIC TABLE'
-
-UNION ALL
-
-SELECT 
-    'MASKING_POLICIES' as MONITORING_CATEGORY,
-    COUNT(*) as TOTAL_OBJECTS,
-    'APPLIED' as STATUS,
-    CURRENT_TIMESTAMP() as LAST_CHECK
-FROM INFORMATION_SCHEMA.POLICY_REFERENCES
-WHERE POLICY_SCHEMA = 'GOVERNANCE' AND POLICY_KIND = 'MASKING_POLICY'
-
-UNION ALL
-
-SELECT 
-    'ROW_ACCESS_POLICIES' as MONITORING_CATEGORY,
-    COUNT(*) as TOTAL_OBJECTS,
-    'APPLIED' as STATUS,
-    CURRENT_TIMESTAMP() as LAST_CHECK
-FROM INFORMATION_SCHEMA.POLICY_REFERENCES
-WHERE POLICY_SCHEMA = 'GOVERNANCE' AND POLICY_KIND = 'ROW_ACCESS_POLICY';
+use role workshop_analyst;
+select * from SHARING.BROKER_PERFORMANCE_PORTAL;
 
 /* ================================================================================
-DATA SHARING SETUP
+WORKSHOP MODIFICATION INSTRUCTIONS
 ================================================================================
-*/
 
--- Create secure data shares for different stakeholder groups
-CREATE OR REPLACE SHARE BROKER_PORTAL_SHARE
-    COMMENT = 'Individual broker performance data share with governance controls';
+During the workshop:
 
-CREATE OR REPLACE SHARE REGIONAL_ANALYTICS_SHARE
-    COMMENT = 'Regional management analytics share with aggregated insights';
+1. CREATE CONSUMER ACCOUNT in Snowflake UI
+2. ADD the BROKER_PERFORMANCE_SHARE to the consumer account
+3. LOGIN to consumer account and verify data access
+4. RETURN to this script and UNCOMMENT the account-based logic:
+   - Line 40: WHEN CURRENT_ACCOUNT_NAME() LIKE '%CONSUMER%' THEN...
+   - Line 52: WHEN CURRENT_ACCOUNT_NAME() LIKE '%CONSUMER%' THEN...
+   - Line 75: WHEN CURRENT_ACCOUNT_NAME() LIKE '%CONSUMER%' THEN...
+5. RERUN the policy creation commands
+6. RETURN to consumer account to see masked data
 
-CREATE OR REPLACE SHARE EXECUTIVE_METRICS_SHARE
-    COMMENT = 'Executive dashboard metrics share with high-level KPIs';
+This demonstrates progressive governance and secure data sharing capabilities.
 
-CREATE OR REPLACE SHARE GOVERNANCE_MONITORING_SHARE
-    COMMENT = 'Data governance monitoring and compliance reporting share';
-
--- Grant database and schema access to shares
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE BROKER_PORTAL_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE BROKER_PORTAL_SHARE;
-GRANT SELECT ON VIEW SHARING.BROKER_PORTAL_VIEW TO SHARE BROKER_PORTAL_SHARE;
-
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE REGIONAL_ANALYTICS_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE REGIONAL_ANALYTICS_SHARE;
-GRANT SELECT ON VIEW SHARING.REGIONAL_MANAGER_VIEW TO SHARE REGIONAL_ANALYTICS_SHARE;
-
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE EXECUTIVE_METRICS_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE EXECUTIVE_METRICS_SHARE;
-GRANT SELECT ON VIEW SHARING.EXECUTIVE_DASHBOARD_VIEW TO SHARE EXECUTIVE_METRICS_SHARE;
-
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DB TO SHARE GOVERNANCE_MONITORING_SHARE;
-GRANT USAGE ON SCHEMA SHARING TO SHARE GOVERNANCE_MONITORING_SHARE;
-GRANT SELECT ON VIEW SHARING.GOVERNANCE_MONITORING_VIEW TO SHARE GOVERNANCE_MONITORING_SHARE;
-
-/* ================================================================================
-GOVERNANCE ROLES AND PERMISSIONS
-================================================================================
-*/
-
--- Grant comprehensive access to workshop roles
-GRANT SELECT ON ALL VIEWS IN SCHEMA SHARING TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW SHARING.BROKER_PORTAL_VIEW TO ROLE BROKER_CONSUMER;
-GRANT SELECT ON VIEW SHARING.GOVERNANCE_MONITORING_VIEW TO ROLE WORKSHOP_ANALYST;
-
--- Grant governance administration privileges
-GRANT ALL PRIVILEGES ON SCHEMA GOVERNANCE TO ROLE WORKSHOP_ANALYST;
-
-/* ================================================================================
-GOVERNANCE VALIDATION AND MONITORING
-================================================================================
-*/
-
--- Governance implementation status check
-SELECT 
-    'MASKING_POLICIES' as GOVERNANCE_COMPONENT,
-    COUNT(*) as POLICIES_APPLIED,
-    'ACTIVE' as STATUS
-FROM INFORMATION_SCHEMA.POLICY_REFERENCES
-WHERE POLICY_SCHEMA = 'GOVERNANCE' AND POLICY_KIND = 'MASKING_POLICY'
-
-UNION ALL
-
-SELECT 
-    'ROW_ACCESS_POLICIES' as GOVERNANCE_COMPONENT,
-    COUNT(*) as POLICIES_APPLIED,
-    'ACTIVE' as STATUS
-FROM INFORMATION_SCHEMA.POLICY_REFERENCES
-WHERE POLICY_SCHEMA = 'GOVERNANCE' AND POLICY_KIND = 'ROW_ACCESS_POLICY'
-
-UNION ALL
-
-SELECT 
-    'DATA_SHARES' as GOVERNANCE_COMPONENT,
-    COUNT(*) as POLICIES_APPLIED,
-    'ACTIVE' as STATUS
-FROM INFORMATION_SCHEMA.OUTBOUND_SHARES
-WHERE SHARE_NAME LIKE '%SHARE'
-
-UNION ALL
-
-SELECT 
-    'SECURE_VIEWS' as GOVERNANCE_COMPONENT,
-    COUNT(*) as POLICIES_APPLIED,
-    'ACTIVE' as STATUS
-FROM INFORMATION_SCHEMA.VIEWS
-WHERE TABLE_SCHEMA = 'SHARING' AND SECURITY_TYPE = 'SECURE';
-
-/* ================================================================================
-GOVERNANCE POLICIES SETUP COMPLETE
-================================================================================
-Implementation Complete:
-• Classification: Automated PII and financial data discovery with 30-day refresh
-• Masking Policies: 4 progressive policies for financial, contact, performance, and personal data
-• Row Access Policies: 3 territorial and tier-based access controls
-• Secure Data Sharing: 4 governed shares for different stakeholder groups
-• Monitoring Views: Governance compliance and status monitoring
-
-Progressive Governance Architecture:
-• Role-Based Access: ACCOUNTADMIN → WORKSHOP_ANALYST → BROKER_CONSUMER hierarchy
-• Data Sensitivity Levels: Full → Rounded → Masked → Redacted progression
-• Geographic Controls: Territory-based row-level security for broker access
-• Competitive Protection: Performance metrics and premium customer data masking
-
-Data Sharing Strategy:
-• Broker Portal: Individual performance with governance controls
-• Regional Analytics: Territory-wide insights with aggregated data
-• Executive Dashboard: High-level KPIs without operational sensitivity
-• Governance Monitoring: Compliance reporting and policy status tracking
-
-Security Features:
-• Automated Classification: SNOWFLAKE.DATA_PRIVACY.CLASSIFICATION_PROFILE
-• Dynamic Masking: Context-aware based on role and account
-• Row-Level Security: Multi-dimensional access controls
-• Secure Views: Governed data distribution with audit trails
-
-Ready for: Phase 4 - Visualization Dashboards and Phase 5 - Complete Workshop Integration
 ================================================================================
 */ 
+use role accountadmin;
+-- Apply masking policies to broker performance table
+ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
+    MODIFY COLUMN TOTAL_PREMIUM_VOLUME 
+    UNSET MASKING POLICY;
+
+ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
+    MODIFY COLUMN AVG_CUSTOMER_PREMIUM 
+    UNSET MASKING POLICY;
+
+ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
+    MODIFY COLUMN BROKER_PERFORMANCE_ANALYSIS 
+    UNSET MASKING POLICY;
+
+ALTER TABLE ANALYTICS.BROKER_PERFORMANCE_MATRIX 
+    DROP ROW ACCESS POLICY GOVERNANCE.BROKER_ISOLATION_POLICY;

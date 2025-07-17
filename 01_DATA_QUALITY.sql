@@ -45,169 +45,6 @@ AS
     AND NOT REGEXP_LIKE(BROKER_ID, ''^BRK[0-9]{3}$'')
 ) FROM INPUT_TABLE';
 
-/* ================================================================================
-MANUAL DMF EXECUTION - TEST AND AD-HOC ANALYSIS
-================================================================================
-Purpose: Manually call DMFs for testing, validation, and one-off quality checks
-Note: Use this before associating DMFs with tables or for troubleshooting
-================================================================================
-*/
-
--- CUSTOM DMF MANUAL CALLS
--- Test custom age validation DMF on customers table
-SELECT 
-    'CUSTOMERS_INVALID_AGE_TEST' as test_name,
-    RAW_DATA.INVALID_CUSTOMER_AGE_COUNT(
-        SELECT AGE FROM RAW_DATA.CUSTOMERS_RAW
-    ) as invalid_age_count,
-    CURRENT_TIMESTAMP() as test_time;
-
--- Test custom broker ID validation DMF on customers table
-SELECT 
-    'CUSTOMERS_INVALID_BROKER_ID_TEST' as test_name,
-    RAW_DATA.INVALID_BROKER_ID_COUNT(
-        SELECT BROKER_ID FROM RAW_DATA.CUSTOMERS_RAW
-    ) as invalid_broker_id_count,
-    CURRENT_TIMESTAMP() as test_time;
-
--- Test custom broker ID validation DMF on brokers table
-SELECT 
-    'BROKERS_INVALID_ID_TEST' as test_name,
-    RAW_DATA.INVALID_BROKER_ID_COUNT(
-        SELECT BROKER_ID FROM RAW_DATA.BROKERS_RAW
-    ) as invalid_broker_id_count,
-    CURRENT_TIMESTAMP() as test_time;
-
--- SYSTEM DMF MANUAL CALLS
--- Test NULL count DMF on various columns across tables
-SELECT 
-    'CUSTOMERS_NULL_POLICY_TEST' as test_name,
-    SNOWFLAKE.CORE.NULL_COUNT(
-        SELECT POLICY_NUMBER FROM RAW_DATA.CUSTOMERS_RAW
-    ) as null_count,
-    CURRENT_TIMESTAMP() as test_time
-
-UNION ALL
-
-SELECT 
-    'CLAIMS_NULL_POLICY_TEST' as test_name,
-    SNOWFLAKE.CORE.NULL_COUNT(
-        SELECT POLICY_NUMBER FROM RAW_DATA.CLAIMS_RAW
-    ) as null_count,
-    CURRENT_TIMESTAMP() as test_time
-
-UNION ALL
-
-SELECT 
-    'BROKERS_NULL_ID_TEST' as test_name,
-    SNOWFLAKE.CORE.NULL_COUNT(
-        SELECT BROKER_ID FROM RAW_DATA.BROKERS_RAW
-    ) as null_count,
-    CURRENT_TIMESTAMP() as test_time;
-
--- Test DUPLICATE count DMF on key columns
-SELECT 
-    'CUSTOMERS_DUPLICATE_POLICY_TEST' as test_name,
-    SNOWFLAKE.CORE.DUPLICATE_COUNT(
-        SELECT POLICY_NUMBER FROM RAW_DATA.CUSTOMERS_RAW
-    ) as duplicate_count,
-    CURRENT_TIMESTAMP() as test_time
-
-UNION ALL
-
-SELECT 
-    'CLAIMS_DUPLICATE_POLICY_TEST' as test_name,
-    SNOWFLAKE.CORE.DUPLICATE_COUNT(
-        SELECT POLICY_NUMBER FROM RAW_DATA.CLAIMS_RAW
-    ) as duplicate_count,
-    CURRENT_TIMESTAMP() as test_time
-
-UNION ALL
-
-SELECT 
-    'BROKERS_DUPLICATE_ID_TEST' as test_name,
-    SNOWFLAKE.CORE.DUPLICATE_COUNT(
-        SELECT BROKER_ID FROM RAW_DATA.BROKERS_RAW
-    ) as duplicate_count,
-    CURRENT_TIMESTAMP() as test_time;
-
--- Test ROW count DMF on all tables (no column arguments needed)
-SELECT 
-    'CUSTOMERS_ROW_COUNT_TEST' as test_name,
-    SNOWFLAKE.CORE.ROW_COUNT() as row_count,
-    'RAW_DATA.CUSTOMERS_RAW' as table_name,
-    CURRENT_TIMESTAMP() as test_time
-
-UNION ALL
-
-SELECT 
-    'CLAIMS_ROW_COUNT_TEST' as test_name,
-    SNOWFLAKE.CORE.ROW_COUNT() as row_count,
-    'RAW_DATA.CLAIMS_RAW' as table_name,
-    CURRENT_TIMESTAMP() as test_time
-
-UNION ALL
-
-SELECT 
-    'BROKERS_ROW_COUNT_TEST' as test_name,
-    SNOWFLAKE.CORE.ROW_COUNT() as row_count,
-    'RAW_DATA.BROKERS_RAW' as table_name,
-    CURRENT_TIMESTAMP() as test_time;
-
--- COMPREHENSIVE MANUAL QUALITY ASSESSMENT
--- Run all custom DMFs together for complete validation
-SELECT 
-    'COMPREHENSIVE_CUSTOM_DMF_TEST' as test_type,
-    RAW_DATA.INVALID_CUSTOMER_AGE_COUNT(
-        SELECT AGE FROM RAW_DATA.CUSTOMERS_RAW
-    ) as customers_invalid_age,
-    RAW_DATA.INVALID_BROKER_ID_COUNT(
-        SELECT BROKER_ID FROM RAW_DATA.CUSTOMERS_RAW
-    ) as customers_invalid_broker_id,
-    RAW_DATA.INVALID_BROKER_ID_COUNT(
-        SELECT BROKER_ID FROM RAW_DATA.BROKERS_RAW
-    ) as brokers_invalid_id,
-    CURRENT_TIMESTAMP() as test_time;
-
--- Run all system DMFs together for complete validation
-WITH quality_metrics AS (
-    SELECT 
-        'CUSTOMERS' as table_name,
-        SNOWFLAKE.CORE.NULL_COUNT(SELECT POLICY_NUMBER FROM RAW_DATA.CUSTOMERS_RAW) as null_policy_count,
-        SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT POLICY_NUMBER FROM RAW_DATA.CUSTOMERS_RAW) as duplicate_policy_count,
-        SNOWFLAKE.CORE.ROW_COUNT() as total_row_count
-    FROM RAW_DATA.CUSTOMERS_RAW
-    LIMIT 1
-    
-    UNION ALL
-    
-    SELECT 
-        'CLAIMS' as table_name,
-        SNOWFLAKE.CORE.NULL_COUNT(SELECT POLICY_NUMBER FROM RAW_DATA.CLAIMS_RAW) as null_policy_count,
-        SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT POLICY_NUMBER FROM RAW_DATA.CLAIMS_RAW) as duplicate_policy_count,
-        SNOWFLAKE.CORE.ROW_COUNT() as total_row_count
-    FROM RAW_DATA.CLAIMS_RAW
-    LIMIT 1
-    
-    UNION ALL
-    
-    SELECT 
-        'BROKERS' as table_name,
-        SNOWFLAKE.CORE.NULL_COUNT(SELECT BROKER_ID FROM RAW_DATA.BROKERS_RAW) as null_policy_count,
-        SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT BROKER_ID FROM RAW_DATA.BROKERS_RAW) as duplicate_policy_count,
-        SNOWFLAKE.CORE.ROW_COUNT() as total_row_count
-    FROM RAW_DATA.BROKERS_RAW
-    LIMIT 1
-)
-SELECT 
-    'COMPREHENSIVE_SYSTEM_DMF_TEST' as test_type,
-    table_name,
-    null_policy_count,
-    duplicate_policy_count,
-    total_row_count,
-    ROUND((total_row_count - null_policy_count - duplicate_policy_count) * 100.0 / total_row_count, 2) as data_quality_percentage,
-    CURRENT_TIMESTAMP() as test_time
-FROM quality_metrics;
 
 -- AD-HOC QUALITY TESTS
 -- Test specific data quality scenarios manually
@@ -236,13 +73,13 @@ SYSTEM DMF APPLICATION TO TABLES
 */
 -- Set automated monitoring schedule for all tables
 -- Set the data metric function to run when a general DML operation, such as inserting a new row, modifies the table:
-ALTER TABLE RAW_DATA.CUSTOMERS_RAW SET DATA_METRIC_SCHEDULE = 'TRIGGER_ON_CHANGES';
+ALTER TABLE RAW_DATA.CUSTOMERS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
                                                             -- Time interval:
-                                                            -- '5 minute';
+                                                            -- 'TRIGGER_ON_CHANGES';
                                                             -- At 8:00 AM on weekdays only:
                                                             -- 'USING CRON 0 8 * * MON,TUE,WED,THU,FRI UTC';
-ALTER TABLE RAW_DATA.CLAIMS_RAW SET DATA_METRIC_SCHEDULE = 'TRIGGER_ON_CHANGES';
-ALTER TABLE RAW_DATA.BROKERS_RAW SET DATA_METRIC_SCHEDULE = 'TRIGGER_ON_CHANGES';
+ALTER TABLE RAW_DATA.CLAIMS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
+ALTER TABLE RAW_DATA.BROKERS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
 
 -- CUSTOMERS TABLE: Custom + System DMFs
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_CUSTOMER_AGE_COUNT ON (AGE);
@@ -510,8 +347,8 @@ ORDER BY overall_quality_score DESC;
 SELECT 
     relationship_type,
     total_customers,
-    customers_with_valid_brokers as valid_relationships,
-    customers_missing_brokers as missing_relationships,
+    valid_relationships,
+    missing_relationships,
     integrity_percentage,
     CASE 
         WHEN integrity_percentage >= 98 THEN 'EXCELLENT'

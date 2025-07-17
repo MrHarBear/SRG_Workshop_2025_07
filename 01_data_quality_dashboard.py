@@ -98,9 +98,78 @@ def get_quality_monitoring_data():
                 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.ENTITY_QUALITY_SCORES
                 ORDER BY overall_quality_score DESC
             """).to_pandas()
+            
+            # Debug: Log successful fetch
+            if not results['entity_scores'].empty:
+                st.success(f"✅ Successfully fetched entity scores: {len(results['entity_scores'])} entities")
+            else:
+                st.info("ℹ️ Entity scores query returned no data")
+                
         except Exception as e:
             st.warning(f"Could not fetch entity quality scores: {str(e)}")
-            results['entity_scores'] = pd.DataFrame()
+            
+            # Try to check if the view exists
+            try:
+                view_check = session.sql("""
+                    SELECT COUNT(*) as view_exists 
+                    FROM INFORMATION_SCHEMA.VIEWS 
+                    WHERE TABLE_SCHEMA = 'RAW_DATA' 
+                    AND TABLE_NAME = 'ENTITY_QUALITY_SCORES'
+                """).collect()
+                
+                if view_check[0][0] == 0:
+                    st.error("❌ The ENTITY_QUALITY_SCORES view does not exist. Please run 01_DATA_QUALITY.sql first.")
+                else:
+                    st.error("❌ The view exists but query failed. Check permissions and data.")
+                    
+            except Exception as view_error:
+                st.error(f"❌ Cannot check view existence: {str(view_error)}")
+            
+            # Fallback: Try to get basic table information
+            try:
+                st.info("🔄 Attempting fallback: Basic table information...")
+                fallback_data = session.sql("""
+                    SELECT 
+                        'CUSTOMERS_RAW' as entity_name,
+                        3 as total_metrics,
+                        0 as excellent_count,
+                        0 as good_count,
+                        0 as warning_count,
+                        3 as critical_count,
+                        20.0 as overall_quality_score,
+                        CURRENT_TIMESTAMP() as last_measured
+                    
+                    UNION ALL
+                    
+                    SELECT 
+                        'CLAIMS_RAW' as entity_name,
+                        3 as total_metrics,
+                        0 as excellent_count,
+                        0 as good_count,
+                        0 as warning_count,
+                        3 as critical_count,
+                        20.0 as overall_quality_score,
+                        CURRENT_TIMESTAMP() as last_measured
+                    
+                    UNION ALL
+                    
+                    SELECT 
+                        'BROKERS_RAW' as entity_name,
+                        3 as total_metrics,
+                        0 as excellent_count,
+                        0 as good_count,
+                        0 as warning_count,
+                        3 as critical_count,
+                        20.0 as overall_quality_score,
+                        CURRENT_TIMESTAMP() as last_measured
+                """).to_pandas()
+                
+                results['entity_scores'] = fallback_data
+                st.warning("⚠️ Using fallback data. Run 01_DATA_QUALITY.sql to get real quality metrics.")
+                
+            except Exception as fallback_error:
+                st.error(f"❌ Even fallback query failed: {str(fallback_error)}")
+                results['entity_scores'] = pd.DataFrame()
         
         # Detailed quality monitoring summary
         try:
@@ -114,9 +183,69 @@ def get_quality_monitoring_data():
                 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.QUALITY_MONITORING_SUMMARY
                 ORDER BY measurement_time DESC
             """).to_pandas()
+            
+            # Debug: Log successful fetch
+            if not results['quality_summary'].empty:
+                st.success(f"✅ Successfully fetched quality summary: {len(results['quality_summary'])} records")
+            else:
+                st.info("ℹ️ Quality monitoring summary query returned no data")
+                
         except Exception as e:
             st.warning(f"Could not fetch quality monitoring summary: {str(e)}")
-            results['quality_summary'] = pd.DataFrame()
+            
+            # Try to check if the view exists
+            try:
+                view_check = session.sql("""
+                    SELECT COUNT(*) as view_exists 
+                    FROM INFORMATION_SCHEMA.VIEWS 
+                    WHERE TABLE_SCHEMA = 'RAW_DATA' 
+                    AND TABLE_NAME = 'QUALITY_MONITORING_SUMMARY'
+                """).collect()
+                
+                if view_check[0][0] == 0:
+                    st.error("❌ The QUALITY_MONITORING_SUMMARY view does not exist. Please run 01_DATA_QUALITY.sql first.")
+                else:
+                    st.error("❌ The view exists but query failed. Check permissions and data.")
+                    
+            except Exception as view_error:
+                st.error(f"❌ Cannot check view existence: {str(view_error)}")
+            
+            # Fallback: Create sample quality summary data
+            try:
+                st.info("🔄 Attempting fallback: Sample quality summary data...")
+                fallback_quality = session.sql("""
+                    SELECT 
+                        'CUSTOMERS_RAW' as table_name,
+                        'NULL_COUNT' as metric_name,
+                        0 as metric_value,
+                        'EXCELLENT' as quality_status,
+                        CURRENT_TIMESTAMP() as measurement_time
+                    
+                    UNION ALL
+                    
+                    SELECT 
+                        'CLAIMS_RAW' as table_name,
+                        'DUPLICATE_COUNT' as metric_name,
+                        5 as metric_value,
+                        'WARNING' as quality_status,
+                        CURRENT_TIMESTAMP() as measurement_time
+                    
+                    UNION ALL
+                    
+                    SELECT 
+                        'BROKERS_RAW' as table_name,
+                        'INVALID_COUNT' as metric_name,
+                        10 as metric_value,
+                        'CRITICAL' as quality_status,
+                        CURRENT_TIMESTAMP() as measurement_time
+                """).to_pandas()
+                
+                results['quality_summary'] = fallback_quality
+                st.warning("⚠️ Using fallback quality summary data. Run 01_DATA_QUALITY.sql to get real metrics.")
+                
+            except Exception as fallback_error:
+                st.error(f"❌ Even fallback quality summary query failed: {str(fallback_error)}")
+                results['quality_summary'] = pd.DataFrame()
         
         # Relationship integrity metrics - try different column name variations
         try:
@@ -338,32 +467,53 @@ st.markdown('<div class="section-header">Entity Quality Overview</div>', unsafe_
 if 'entity_scores' in quality_data and not quality_data['entity_scores'].empty:
     entity_scores = quality_data['entity_scores']
     
-    col1, col2, col3 = st.columns(3)
+    # Check if required columns exist
+    required_columns = ['overall_quality_score', 'entity_name', 'total_metrics', 'last_measured']
+    missing_columns = [col for col in required_columns if col not in entity_scores.columns]
     
-    for idx, entity in entity_scores.iterrows():
-        with [col1, col2, col3][idx % 3]:
-            score = entity['overall_quality_score']
-            if score >= 90:
-                score_color = COLORS['star_blue']
-                grade = 'EXCELLENT'
-            elif score >= 75:
-                score_color = COLORS['main']
-                grade = 'GOOD'
-            elif score >= 60:
-                score_color = COLORS['valencia_orange']
-                grade = 'NEEDS ATTENTION'
-            else:
-                score_color = COLORS['first_light']
-                grade = 'CRITICAL'
-            
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3 style="color: {COLORS['mid_blue']}; margin: 0;">{entity['entity_name'].replace('_RAW', '')}</h3>
-                <h1 style="color: {score_color}; margin: 10px 0;">{score}%</h1>
-                <p style="color: {COLORS['medium_gray']}; margin: 0;">{grade} - {entity['total_metrics']} metrics</p>
-                <small style="color: {COLORS['medium_gray']};">Last measured: {entity['last_measured']}</small>
-            </div>
-            """, unsafe_allow_html=True)
+    if missing_columns:
+        st.error(f"Entity scores data is missing required columns: {', '.join(missing_columns)}")
+        st.info(f"Available columns: {', '.join(entity_scores.columns.tolist())}")
+        st.info("Please ensure the ENTITY_QUALITY_SCORES view exists and contains all required columns.")
+    else:
+        col1, col2, col3 = st.columns(3)
+        
+        for idx, entity in entity_scores.iterrows():
+            with [col1, col2, col3][idx % 3]:
+                score = entity['overall_quality_score']
+                if score >= 90:
+                    score_color = COLORS['star_blue']
+                    grade = 'EXCELLENT'
+                elif score >= 75:
+                    score_color = COLORS['main']
+                    grade = 'GOOD'
+                elif score >= 60:
+                    score_color = COLORS['valencia_orange']
+                    grade = 'NEEDS ATTENTION'
+                else:
+                    score_color = COLORS['first_light']
+                    grade = 'CRITICAL'
+                
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3 style="color: {COLORS['mid_blue']}; margin: 0;">{entity['entity_name'].replace('_RAW', '')}</h3>
+                    <h1 style="color: {score_color}; margin: 10px 0;">{score}%</h1>
+                    <p style="color: {COLORS['medium_gray']}; margin: 0;">{grade} - {entity['total_metrics']} metrics</p>
+                    <small style="color: {COLORS['medium_gray']};">Last measured: {entity['last_measured']}</small>
+                </div>
+                """, unsafe_allow_html=True)
+else:
+    st.warning("⚠️ Entity quality scores data is not available. This could mean:")
+    st.markdown("""
+    - The `ENTITY_QUALITY_SCORES` view doesn't exist
+    - No data has been processed yet
+    - Database connection issues
+    
+    **To resolve:**
+    1. Ensure you've run the `01_DATA_QUALITY.sql` script
+    2. Check that the database and schema exist
+    3. Verify your role has access to the views
+    """)
 
 # Quality Metrics Breakdown
 st.markdown('<div class="section-header">Quality Metrics Breakdown</div>', unsafe_allow_html=True)
@@ -371,56 +521,91 @@ st.markdown('<div class="section-header">Quality Metrics Breakdown</div>', unsaf
 if 'quality_summary' in quality_data and not quality_data['quality_summary'].empty:
     quality_summary = quality_data['quality_summary']
     
-    col1, col2 = st.columns(2)
+    # Check if required columns exist
+    required_columns = ['quality_status', 'table_name']
+    missing_columns = [col for col in required_columns if col not in quality_summary.columns]
     
-    with col1:
-        st.markdown("**Quality Status Distribution**")
+    if missing_columns:
+        st.error(f"Quality summary data is missing required columns: {', '.join(missing_columns)}")
+        st.info(f"Available columns: {', '.join(quality_summary.columns.tolist())}")
+        st.info("Please ensure the QUALITY_MONITORING_SUMMARY view exists and contains all required columns.")
+    else:
+        col1, col2 = st.columns(2)
         
-        status_counts = quality_summary['quality_status'].value_counts()
+        with col1:
+            st.markdown("**Quality Status Distribution**")
+            
+            try:
+                status_counts = quality_summary['quality_status'].value_counts()
+                
+                if len(status_counts) > 0:
+                    # Create pie chart with Snowflake colors
+                    fig_status = px.pie(
+                        values=status_counts.values,
+                        names=status_counts.index,
+                        color_discrete_map={
+                            'EXCELLENT': COLORS['star_blue'],
+                            'GOOD': COLORS['main'],
+                            'WARNING': COLORS['valencia_orange'],
+                            'CRITICAL': COLORS['first_light']
+                        },
+                        title="Current Quality Status Distribution"
+                    )
+                    fig_status.update_layout(
+                        title_font_color=COLORS['mid_blue'],
+                        height=350
+                    )
+                    st.plotly_chart(fig_status, use_container_width=True)
+                else:
+                    st.info("No quality status data available for visualization.")
+                    
+            except Exception as e:
+                st.error(f"Error creating status distribution chart: {str(e)}")
         
-        # Create pie chart with Snowflake colors
-        fig_status = px.pie(
-            values=status_counts.values,
-            names=status_counts.index,
-            color_discrete_map={
-                'EXCELLENT': COLORS['star_blue'],
-                'GOOD': COLORS['main'],
-                'WARNING': COLORS['valencia_orange'],
-                'CRITICAL': COLORS['first_light']
-            },
-            title="Current Quality Status Distribution"
-        )
-        fig_status.update_layout(
-            title_font_color=COLORS['mid_blue'],
-            height=350
-        )
-        st.plotly_chart(fig_status, use_container_width=True)
+        with col2:
+            st.markdown("**Metrics by Entity**")
+            
+            try:
+                # Group by table and count metrics
+                entity_metrics = quality_summary.groupby(['table_name', 'quality_status']).size().reset_index(name='count')
+                
+                if not entity_metrics.empty:
+                    fig_entity = px.bar(
+                        entity_metrics,
+                        x='table_name',
+                        y='count',
+                        color='quality_status',
+                        color_discrete_map={
+                            'EXCELLENT': COLORS['star_blue'],
+                            'GOOD': COLORS['main'],
+                            'WARNING': COLORS['valencia_orange'],
+                            'CRITICAL': COLORS['first_light']
+                        },
+                        title="Quality Metrics by Entity",
+                        labels={'table_name': 'Entity', 'count': 'Metric Count'}
+                    )
+                    fig_entity.update_layout(
+                        title_font_color=COLORS['mid_blue'],
+                        height=350
+                    )
+                    st.plotly_chart(fig_entity, use_container_width=True)
+                else:
+                    st.info("No entity metrics data available for visualization.")
+                    
+            except Exception as e:
+                st.error(f"Error creating entity metrics chart: {str(e)}")
+else:
+    st.warning("⚠️ Quality metrics breakdown data is not available. This could mean:")
+    st.markdown("""
+    - The `QUALITY_MONITORING_SUMMARY` view doesn't exist
+    - No DMF (Data Metric Function) results have been generated yet
+    - Database connection issues
     
-    with col2:
-        st.markdown("**Metrics by Entity**")
-        
-        # Group by table and count metrics
-        entity_metrics = quality_summary.groupby(['table_name', 'quality_status']).size().reset_index(name='count')
-        
-        fig_entity = px.bar(
-            entity_metrics,
-            x='table_name',
-            y='count',
-            color='quality_status',
-            color_discrete_map={
-                'EXCELLENT': COLORS['star_blue'],
-                'GOOD': COLORS['main'],
-                'WARNING': COLORS['valencia_orange'],
-                'CRITICAL': COLORS['first_light']
-            },
-            title="Quality Metrics by Entity",
-            labels={'table_name': 'Entity', 'count': 'Metric Count'}
-        )
-        fig_entity.update_layout(
-            title_font_color=COLORS['mid_blue'],
-            height=350
-        )
-        st.plotly_chart(fig_entity, use_container_width=True)
+    **To resolve:**
+    1. Ensure you've run the `01_DATA_QUALITY.sql` script
+    2. Wait for DMF execution to generate quality data
+    3. Check that your role has access to quality monitoring views
+    """)
 
 # Detailed Quality Metrics
 st.markdown('<div class="section-header">Detailed Quality Metrics</div>', unsafe_allow_html=True)
@@ -480,33 +665,57 @@ st.markdown('<div class="section-header">Relationship Integrity Analysis</div>',
 if 'relationship_metrics' in quality_data and not quality_data['relationship_metrics'].empty:
     rel_metrics = quality_data['relationship_metrics']
     
-    col1, col2 = st.columns(2)
+    # Check if required columns exist
+    required_columns = ['relationship_type', 'integrity_percentage', 'integrity_grade', 'valid_relationships', 'total_customers']
+    missing_columns = [col for col in required_columns if col not in rel_metrics.columns]
     
-    for idx, relationship in rel_metrics.iterrows():
-        with [col1, col2][idx % 2]:
-            rel_type = relationship['relationship_type'].replace('_', ' ').title()
-            integrity_pct = relationship['integrity_percentage']
-            grade = relationship['integrity_grade']
-            
-            if grade == 'EXCELLENT':
-                grade_color = COLORS['star_blue']
-            elif grade == 'GOOD':
-                grade_color = COLORS['main']
-            elif grade == 'NEEDS_ATTENTION':
-                grade_color = COLORS['valencia_orange']
-            else:
-                grade_color = COLORS['first_light']
-            
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3 style="color: {COLORS['mid_blue']}; margin: 0;">{rel_type}</h3>
-                <h1 style="color: {grade_color}; margin: 10px 0;">{integrity_pct}%</h1>
-                <p style="color: {COLORS['medium_gray']}; margin: 0;">{grade}</p>
-                <small style="color: {COLORS['medium_gray']};">
-                    {relationship['valid_relationships']:,} valid / {relationship['total_customers']:,} total
-                </small>
-            </div>
-            """, unsafe_allow_html=True)
+    if missing_columns:
+        st.error(f"Relationship metrics data is missing required columns: {', '.join(missing_columns)}")
+        st.info(f"Available columns: {', '.join(rel_metrics.columns.tolist())}")
+        st.info("Please ensure the RELATIONSHIP_QUALITY_METRICS view exists and contains all required columns.")
+    else:
+        col1, col2 = st.columns(2)
+        
+        try:
+            for idx, relationship in rel_metrics.iterrows():
+                with [col1, col2][idx % 2]:
+                    rel_type = relationship['relationship_type'].replace('_', ' ').title()
+                    integrity_pct = relationship['integrity_percentage']
+                    grade = relationship['integrity_grade']
+                    
+                    if grade == 'EXCELLENT':
+                        grade_color = COLORS['star_blue']
+                    elif grade == 'GOOD':
+                        grade_color = COLORS['main']
+                    elif grade == 'NEEDS_ATTENTION':
+                        grade_color = COLORS['valencia_orange']
+                    else:
+                        grade_color = COLORS['first_light']
+                    
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <h3 style="color: {COLORS['mid_blue']}; margin: 0;">{rel_type}</h3>
+                        <h1 style="color: {grade_color}; margin: 10px 0;">{integrity_pct}%</h1>
+                        <p style="color: {COLORS['medium_gray']}; margin: 0;">{grade}</p>
+                        <small style="color: {COLORS['medium_gray']};">
+                            {relationship['valid_relationships']:,} valid / {relationship['total_customers']:,} total
+                        </small>
+                    </div>
+                    """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Error displaying relationship metrics: {str(e)}")
+else:
+    st.warning("⚠️ Relationship integrity data is not available. This could mean:")
+    st.markdown("""
+    - The `RELATIONSHIP_QUALITY_METRICS` view doesn't exist
+    - No relationship data has been processed yet
+    - Database connection issues
+    
+    **To resolve:**
+    1. Ensure you've run the `01_DATA_QUALITY.sql` script
+    2. Check that customer-broker and customer-claim relationships exist
+    3. Verify your role has access to the relationship quality views
+    """)
 
 # Data Quality Issue Detection & Remediation
 st.markdown('<div class="section-header">Data Quality Issue Detection & Remediation</div>', unsafe_allow_html=True)
@@ -637,32 +846,56 @@ st.markdown('<div class="section-header">Data Metric Function Status</div>', uns
 if 'dmf_status' in quality_data and not quality_data['dmf_status'].empty:
     dmf_status = quality_data['dmf_status']
     
-    st.markdown(f"""
-    <div class="dmf-note">
-    <strong>DMF Configuration:</strong> This section shows the status of all Data Metric Functions 
-    configured for automated quality monitoring across the three-entity model.
-    </div>
-    """, unsafe_allow_html=True)
+    # Check if required columns exist
+    required_columns = ['table_name', 'metric_name', 'schedule_status', 'schedule']
+    missing_columns = [col for col in required_columns if col not in dmf_status.columns]
     
-    # Group by table for better display
-    for table_name in dmf_status['table_name'].unique():
-        table_dmfs = dmf_status[dmf_status['table_name'] == table_name]
+    if missing_columns:
+        st.error(f"DMF status data is missing required columns: {', '.join(missing_columns)}")
+        st.info(f"Available columns: {', '.join(dmf_status.columns.tolist())}")
+        st.info("Please ensure the DMF configuration data is properly structured.")
+    else:
+        st.markdown(f"""
+        <div class="dmf-note">
+        <strong>DMF Configuration:</strong> This section shows the status of all Data Metric Functions 
+        configured for automated quality monitoring across the three-entity model.
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.markdown(f"**{table_name.upper()}**")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total DMFs", len(table_dmfs))
-        with col2:
-            active_count = len(table_dmfs[table_dmfs['schedule_status'] == 'STARTED'])
-            st.metric("Active DMFs", active_count)
-        with col3:
-            st.metric("Schedule", table_dmfs['schedule'].iloc[0] if not table_dmfs.empty else "N/A")
-        
-        # Display DMF details
-        dmf_display = table_dmfs[['metric_name', 'schedule_status']].copy()
-        dmf_display['metric_name'] = dmf_display['metric_name'].str.replace('INSURANCE_WORKSHOP_DB.RAW_DATA.', '')
-        st.dataframe(dmf_display, use_container_width=True, hide_index=True)
+        try:
+            # Group by table for better display
+            for table_name in dmf_status['table_name'].unique():
+                table_dmfs = dmf_status[dmf_status['table_name'] == table_name]
+                
+                st.markdown(f"**{table_name.upper()}**")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total DMFs", len(table_dmfs))
+                with col2:
+                    active_count = len(table_dmfs[table_dmfs['schedule_status'] == 'STARTED'])
+                    st.metric("Active DMFs", active_count)
+                with col3:
+                    st.metric("Schedule", table_dmfs['schedule'].iloc[0] if not table_dmfs.empty else "N/A")
+                
+                # Display DMF details
+                dmf_display = table_dmfs[['metric_name', 'schedule_status']].copy()
+                dmf_display['metric_name'] = dmf_display['metric_name'].str.replace('INSURANCE_WORKSHOP_DB.RAW_DATA.', '')
+                st.dataframe(dmf_display, use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"Error displaying DMF configuration: {str(e)}")
+else:
+    st.warning("⚠️ DMF configuration data is not available. This could mean:")
+    st.markdown("""
+    - Data Metric Functions haven't been configured yet
+    - The DMF status query failed
+    - Database connection issues
+    
+    **To resolve:**
+    1. Ensure you've run the `01_DATA_QUALITY.sql` script
+    2. Check that DMFs are properly configured and running
+    3. Verify your role has access to DMF metadata
+    """)
 
 # Historical Trends (if available)
 if not historical_data.empty:
@@ -700,9 +933,17 @@ if quality_data:
             st.metric("Active DMFs", total_dmfs)
     
     with col3:
-        if 'quality_summary' in quality_data:
-            critical_count = len(quality_data['quality_summary'][quality_data['quality_summary']['quality_status'] == 'CRITICAL'])
-            st.metric("Critical Issues", critical_count, delta=None if critical_count == 0 else f"-{critical_count}")
+        if 'quality_summary' in quality_data and not quality_data['quality_summary'].empty:
+            try:
+                if 'quality_status' in quality_data['quality_summary'].columns:
+                    critical_count = len(quality_data['quality_summary'][quality_data['quality_summary']['quality_status'] == 'CRITICAL'])
+                    st.metric("Critical Issues", critical_count, delta=None if critical_count == 0 else f"-{critical_count}")
+                else:
+                    st.metric("Critical Issues", "N/A", delta="No status data")
+            except Exception as e:
+                st.metric("Critical Issues", "Error", delta="Query failed")
+        else:
+            st.metric("Critical Issues", "N/A", delta="No data")
     
     with col4:
         current_time = datetime.now().strftime("%H:%M:%S")
