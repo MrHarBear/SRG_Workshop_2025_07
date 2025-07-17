@@ -1,9 +1,9 @@
 /* ================================================================================
 INSURANCE WORKSHOP - DATA QUALITY MONITORING
 ================================================================================
-Purpose: Comprehensive data quality monitoring with DMFs for three-entity model
+Purpose: Comprehensive data quality monitoring with DMFs for two-entity model
 Scope: Custom and system DMFs, automated monitoring, quality scoring
-Entities: CUSTOMERS, CLAIMS, BROKERS with cross-entity validation
+Entities: CUSTOMERS, CLAIMS with cross-entity validation
 ================================================================================
 */
 
@@ -71,15 +71,9 @@ FROM RAW_DATA.CUSTOMERS_RAW;
 SYSTEM DMF APPLICATION TO TABLES
 ===================================================================================
 */
--- Set automated monitoring schedule for all tables
--- Set the data metric function to run when a general DML operation, such as inserting a new row, modifies the table:
+-- Set automated monitoring schedule for customer and claims tables only
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
-                                                            -- Time interval:
-                                                            -- 'TRIGGER_ON_CHANGES';
-                                                            -- At 8:00 AM on weekdays only:
-                                                            -- 'USING CRON 0 8 * * MON,TUE,WED,THU,FRI UTC';
 ALTER TABLE RAW_DATA.CLAIMS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
-ALTER TABLE RAW_DATA.BROKERS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
 
 -- CUSTOMERS TABLE: Custom + System DMFs
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_CUSTOMER_AGE_COUNT ON (AGE);
@@ -92,12 +86,6 @@ ALTER TABLE RAW_DATA.CUSTOMERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.ROW_C
 ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (POLICY_NUMBER);
 ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (POLICY_NUMBER);
 ALTER TABLE RAW_DATA.CLAIMS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.ROW_COUNT ON ();
-
--- BROKERS TABLE: Custom + System DMFs
-ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION RAW_DATA.INVALID_BROKER_ID_COUNT ON (BROKER_ID);
-ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (BROKER_ID);
-ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (BROKER_ID);
-ALTER TABLE RAW_DATA.BROKERS_RAW ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.ROW_COUNT ON ();
 
 /* ================================================================================
 QUALITY DASHBOARD DATA PREPARATION
@@ -133,7 +121,7 @@ SELECT
 FROM SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS
 WHERE table_database = 'INSURANCE_WORKSHOP_DB'
     AND table_schema = 'RAW_DATA'
-    AND table_name IN ('CUSTOMERS_RAW', 'CLAIMS_RAW', 'BROKERS_RAW');
+    AND table_name IN ('CUSTOMERS_RAW', 'CLAIMS_RAW');
 
 -- Create aggregated quality score view
 CREATE OR REPLACE VIEW RAW_DATA.ENTITY_QUALITY_SCORES AS
@@ -157,18 +145,6 @@ GROUP BY table_name;
 
 -- Create cross-entity relationship quality view
 CREATE OR REPLACE VIEW RAW_DATA.RELATIONSHIP_QUALITY_METRICS AS
-SELECT 
-    'CUSTOMER_BROKER_INTEGRITY' as relationship_type,
-    COUNT(c.POLICY_NUMBER) as total_customers,
-    COUNT(b.BROKER_ID) as valid_relationships,
-    COUNT(c.POLICY_NUMBER) - COUNT(b.BROKER_ID) as missing_relationships,
-    ROUND((COUNT(b.BROKER_ID) * 100.0) / COUNT(c.POLICY_NUMBER), 2) as integrity_percentage,
-    CURRENT_TIMESTAMP() as measured_at
-FROM RAW_DATA.CUSTOMERS_RAW c
-LEFT JOIN RAW_DATA.BROKERS_RAW b ON c.BROKER_ID = b.BROKER_ID
-
-UNION ALL
-
 SELECT 
     'CUSTOMER_CLAIMS_INTEGRITY' as relationship_type,
     COUNT(DISTINCT c.POLICY_NUMBER) as total_customers,
@@ -229,13 +205,13 @@ FROM TABLE(SYSTEM$DATA_METRIC_SCAN(
     ARGUMENT_NAME => 'POLICY_NUMBER'
 ));
 
--- Example 4: Find duplicate broker IDs
-CREATE OR REPLACE VIEW RAW_DATA.BROKERS_WITH_DUPLICATE_IDS AS
+-- Example 4: Find duplicate policy numbers in claims table
+CREATE OR REPLACE VIEW RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES AS
 SELECT *
 FROM TABLE(SYSTEM$DATA_METRIC_SCAN(
-    REF_ENTITY_NAME => 'INSURANCE_WORKSHOP_DB.RAW_DATA.BROKERS_RAW',
+    REF_ENTITY_NAME => 'INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_RAW',
     METRIC_NAME => 'snowflake.core.duplicate_count',
-    ARGUMENT_NAME => 'BROKER_ID'
+    ARGUMENT_NAME => 'POLICY_NUMBER'
 ));
 
 /* ================================================================================
@@ -268,9 +244,9 @@ FROM RAW_DATA.CLAIMS_WITH_NULL_POLICY_NUMBERS
 UNION ALL
 
 SELECT 
-    'DUPLICATE_BROKER_IDS' as issue_type,
+    'DUPLICATE_POLICY_NUMBERS_CLAIMS' as issue_type,
     COUNT(*) as affected_records
-FROM RAW_DATA.BROKERS_WITH_DUPLICATE_IDS;
+FROM RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES;
 
 -- Example remediation query (commented for safety)
 /*
@@ -303,7 +279,7 @@ SELECT
 FROM SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS
 WHERE table_database = 'INSURANCE_WORKSHOP_DB'
     AND table_schema = 'RAW_DATA'
-    AND table_name IN ('CUSTOMERS_RAW', 'CLAIMS_RAW', 'BROKERS_RAW')
+    AND table_name IN ('CUSTOMERS_RAW', 'CLAIMS_RAW')
 ORDER BY measurement_time DESC, table_name, metric_name;
 
 /* ================================================================================
@@ -320,7 +296,7 @@ GRANT SELECT ON VIEW RAW_DATA.RELATIONSHIP_QUALITY_METRICS TO ROLE WORKSHOP_ANAL
 GRANT SELECT ON VIEW RAW_DATA.CUSTOMERS_WITH_NULL_POLICY_NUMBERS TO ROLE WORKSHOP_ANALYST;
 GRANT SELECT ON VIEW RAW_DATA.CUSTOMERS_WITH_DUPLICATE_POLICIES TO ROLE WORKSHOP_ANALYST;
 GRANT SELECT ON VIEW RAW_DATA.CLAIMS_WITH_NULL_POLICY_NUMBERS TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW RAW_DATA.BROKERS_WITH_DUPLICATE_IDS TO ROLE WORKSHOP_ANALYST;
+GRANT SELECT ON VIEW RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES TO ROLE WORKSHOP_ANALYST;
 
 /* ================================================================================
 QUALITY VALIDATION REPORT
@@ -363,10 +339,10 @@ DATA QUALITY MONITORING SETUP COMPLETE - ENHANCED WITH REMEDIATION
 ================================================================================
 Setup Complete:
 • Custom DMFs: 2 SQL functions for essential business validation
-• System DMFs: 9 functions across 3 tables for core data quality
-• Monitoring: TRIGGER_ON_CHANGES scheduling for real-time quality checks
-• Views: 7 views (3 quality scoring + 4 issue identification) for comprehensive monitoring
-• Coverage: Customers (5 DMFs), Claims (3 DMFs), Brokers (4 DMFs)
+• System DMFs: 8 functions across 2 tables for core data quality
+• Monitoring: 5-minute scheduling for automated quality checks
+• Views: 6 views (3 quality scoring + 3 issue identification) for comprehensive monitoring
+• Coverage: Customers (5 DMFs), Claims (3 DMFs)
 
 Enhanced Quality Framework:
 • Business Rules: Customer age validation, broker ID format validation
@@ -378,7 +354,7 @@ Custom DMF Focus:
 • INVALID_CUSTOMER_AGE_COUNT: Validates customer age within 18-85 range
 • INVALID_BROKER_ID_COUNT: Ensures broker IDs follow BRK### format pattern
 
-Enhanced Capabilities (NEW):
+Enhanced Capabilities:
 • SYSTEM$DATA_METRIC_SCAN: Identify specific problematic records for remediation
 • SHOW DATA METRIC FUNCTIONS: Comprehensive DMF inventory and management
 • Issue Identification Views: Pre-built views for common data quality problems
@@ -388,12 +364,12 @@ Quality Issue Detection Views:
 • CUSTOMERS_WITH_NULL_POLICY_NUMBERS: Records needing policy number assignment
 • CUSTOMERS_WITH_DUPLICATE_POLICIES: Duplicate policy records for cleanup
 • CLAIMS_WITH_NULL_POLICY_NUMBERS: Claims missing policy associations
-• BROKERS_WITH_DUPLICATE_IDS: Duplicate broker records for resolution
+• CLAIMS_WITH_DUPLICATE_POLICIES: Duplicate claim policy records for resolution
 
 Demo Features:
 • Record-level issue identification using SYSTEM$DATA_METRIC_SCAN
 • Targeted remediation capabilities with example SQL
-• Real-time monitoring with TRIGGER_ON_CHANGES scheduling
+• Real-time monitoring with 5-minute scheduling
 • Comprehensive quality scoring and status classification
 
 Ready for: Phase 3 - Advanced Analytics and Governance implementation

@@ -249,63 +249,26 @@ def get_quality_monitoring_data():
         
         # Relationship integrity metrics - try different column name variations
         try:
-            # First try with new column names
+            # Only focus on customer-claims relationship since brokers are removed
             results['relationship_metrics'] = session.sql("""
                 SELECT 
-                    relationship_type,
-                    total_customers,
-                    valid_relationships,
-                    missing_relationships,
-                    integrity_percentage,
+                    'CUSTOMER_CLAIMS_INTEGRITY' as relationship_type,
+                    COUNT(DISTINCT c.POLICY_NUMBER) as total_customers,
+                    COUNT(DISTINCT cl.POLICY_NUMBER) as valid_relationships,
+                    COUNT(DISTINCT c.POLICY_NUMBER) - COUNT(DISTINCT cl.POLICY_NUMBER) as missing_relationships,
+                    ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) as integrity_percentage,
                     CASE 
-                        WHEN integrity_percentage >= 98 THEN 'EXCELLENT'
-                        WHEN integrity_percentage >= 95 THEN 'GOOD'
-                        WHEN integrity_percentage >= 90 THEN 'NEEDS_ATTENTION'
+                        WHEN ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) >= 98 THEN 'EXCELLENT'
+                        WHEN ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) >= 95 THEN 'GOOD'
+                        WHEN ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) >= 90 THEN 'NEEDS_ATTENTION'
                         ELSE 'CRITICAL'
                     END as integrity_grade
-                FROM INSURANCE_WORKSHOP_DB.RAW_DATA.RELATIONSHIP_QUALITY_METRICS
+                FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW c
+                LEFT JOIN INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_RAW cl ON c.POLICY_NUMBER = cl.POLICY_NUMBER
             """).to_pandas()
-        except:
-            try:
-                # Fallback: Try with original column names for backwards compatibility
-                temp_df1 = session.sql("""
-                    SELECT 
-                        'CUSTOMER_BROKER_INTEGRITY' as relationship_type,
-                        COUNT(c.POLICY_NUMBER) as total_customers,
-                        COUNT(b.BROKER_ID) as valid_relationships,
-                        COUNT(c.POLICY_NUMBER) - COUNT(b.BROKER_ID) as missing_relationships,
-                        ROUND((COUNT(b.BROKER_ID) * 100.0) / COUNT(c.POLICY_NUMBER), 2) as integrity_percentage,
-                        CASE 
-                            WHEN ROUND((COUNT(b.BROKER_ID) * 100.0) / COUNT(c.POLICY_NUMBER), 2) >= 98 THEN 'EXCELLENT'
-                            WHEN ROUND((COUNT(b.BROKER_ID) * 100.0) / COUNT(c.POLICY_NUMBER), 2) >= 95 THEN 'GOOD'
-                            WHEN ROUND((COUNT(b.BROKER_ID) * 100.0) / COUNT(c.POLICY_NUMBER), 2) >= 90 THEN 'NEEDS_ATTENTION'
-                            ELSE 'CRITICAL'
-                        END as integrity_grade
-                    FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW c
-                    LEFT JOIN INSURANCE_WORKSHOP_DB.RAW_DATA.BROKERS_RAW b ON c.BROKER_ID = b.BROKER_ID
-                """).to_pandas()
-                
-                temp_df2 = session.sql("""
-                    SELECT 
-                        'CUSTOMER_CLAIMS_INTEGRITY' as relationship_type,
-                        COUNT(DISTINCT c.POLICY_NUMBER) as total_customers,
-                        COUNT(DISTINCT cl.POLICY_NUMBER) as valid_relationships,
-                        COUNT(DISTINCT c.POLICY_NUMBER) - COUNT(DISTINCT cl.POLICY_NUMBER) as missing_relationships,
-                        ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) as integrity_percentage,
-                        CASE 
-                            WHEN ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) >= 98 THEN 'EXCELLENT'
-                            WHEN ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) >= 95 THEN 'GOOD'
-                            WHEN ROUND((COUNT(DISTINCT cl.POLICY_NUMBER) * 100.0) / COUNT(DISTINCT c.POLICY_NUMBER), 2) >= 90 THEN 'NEEDS_ATTENTION'
-                            ELSE 'CRITICAL'
-                        END as integrity_grade
-                    FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW c
-                    LEFT JOIN INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_RAW cl ON c.POLICY_NUMBER = cl.POLICY_NUMBER
-                """).to_pandas()
-                
-                results['relationship_metrics'] = pd.concat([temp_df1, temp_df2], ignore_index=True)
-            except Exception as e:
-                st.warning(f"Could not fetch relationship metrics: {str(e)}")
-                results['relationship_metrics'] = pd.DataFrame()
+        except Exception as e:
+            st.warning(f"Could not fetch relationship metrics: {str(e)}")
+            results['relationship_metrics'] = pd.DataFrame()
         
         # Data quality issue identification using SYSTEM$DATA_METRIC_SCAN
         try:
@@ -335,10 +298,10 @@ def get_quality_monitoring_data():
                 UNION ALL
                 
                 SELECT 
-                    'DUPLICATE_BROKER_IDS' as issue_type,
+                    'DUPLICATE_POLICY_NUMBERS_CLAIMS' as issue_type,
                     COUNT(*) as affected_records,
-                    'BROKERS_RAW' as table_name
-                FROM INSURANCE_WORKSHOP_DB.RAW_DATA.BROKERS_WITH_DUPLICATE_IDS
+                    'CLAIMS_RAW' as table_name
+                FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES
             """).to_pandas()
         except Exception as e:
             st.warning(f"Could not fetch quality issues: {str(e)}")
@@ -348,18 +311,14 @@ def get_quality_monitoring_data():
         try:
             # Create a simulated DMF status since INFORMATION_SCHEMA queries don't work in Streamlit
             dmf_data = [
-                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'INVALID_CUSTOMER_AGE_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'INVALID_BROKER_ID_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.NULL_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.DUPLICATE_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.ROW_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CLAIMS_RAW', 'metric_name': 'SNOWFLAKE.CORE.NULL_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CLAIMS_RAW', 'metric_name': 'SNOWFLAKE.CORE.DUPLICATE_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'CLAIMS_RAW', 'metric_name': 'SNOWFLAKE.CORE.ROW_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'BROKERS_RAW', 'metric_name': 'INVALID_BROKER_ID_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'BROKERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.NULL_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'BROKERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.DUPLICATE_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'},
-                {'table_name': 'BROKERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.ROW_COUNT', 'schedule': 'TRIGGER_ON_CHANGES', 'schedule_status': 'STARTED'}
+                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'INVALID_CUSTOMER_AGE_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'INVALID_BROKER_ID_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.NULL_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.DUPLICATE_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CUSTOMERS_RAW', 'metric_name': 'SNOWFLAKE.CORE.ROW_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CLAIMS_RAW', 'metric_name': 'SNOWFLAKE.CORE.NULL_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CLAIMS_RAW', 'metric_name': 'SNOWFLAKE.CORE.DUPLICATE_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'},
+                {'table_name': 'CLAIMS_RAW', 'metric_name': 'SNOWFLAKE.CORE.ROW_COUNT', 'schedule': '5 minute', 'schedule_status': 'STARTED'}
             ]
             results['dmf_status'] = pd.DataFrame(dmf_data)
         except Exception as e:
@@ -955,6 +914,6 @@ st.markdown(f"""
 <div style='text-align: center; color: {COLORS['medium_gray']}; padding: 20px;'>
     <p><strong>Insurance Workshop - Data Quality Monitoring Dashboard</strong></p>
     <p>Powered by Snowflake Data Metric Functions with Real-time Quality Scoring</p>
-    <p>Three-Entity Model: Customers • Claims • Brokers with Cross-Entity Validation</p>
+    <p>Two-Entity Model: Customers • Claims with Cross-Entity Validation</p>
 </div>
 """, unsafe_allow_html=True) 
