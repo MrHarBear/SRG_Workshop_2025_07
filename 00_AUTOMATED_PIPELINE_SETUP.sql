@@ -119,13 +119,19 @@ LS @INSURANCE_WORKSHOP_DEMO_REPO/branches/main;
 
 -- Create simplified stage structure for workshop operations
 -- DATA_STAGE: All CSV and JSON data files (customers, claims, brokers)
--- DOCUMENT_STAGE: Documentation and reference files
+-- DOCUMENT_STAGE: Claims Documents
+-- POLICY_WORDING_DOCUMENTS: Policy Wording Document Landing zone
 CREATE OR REPLACE STAGE RAW_DATA.DATA_STAGE
     DIRECTORY = ( ENABLE = true )
     ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
     COMMENT = 'Unified stage for all CSV and JSON data files';
 
 CREATE OR REPLACE STAGE RAW_DATA.DOCUMENT_STAGE
+    DIRECTORY = ( ENABLE = true )
+    ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
+    COMMENT = 'Stage for documentation and reference files';
+
+CREATE OR REPLACE STAGE RAW_DATA.POLICY_WORDING_DOCUMENTS
     DIRECTORY = ( ENABLE = true )
     ENCRYPTION = ( TYPE = 'SNOWFLAKE_SSE' )
     COMMENT = 'Stage for documentation and reference files';
@@ -253,7 +259,6 @@ USING TEMPLATE (
             FILE_FORMAT=>'JSON_FORMAT',
             FILES=>'broker_profiles.json',
             IGNORE_CASE => TRUE
-
         )
     )
 );
@@ -267,6 +272,26 @@ INITIAL DATA LOADING FROM GIT REPOSITORY
 Load data into schema-detected tables with automatic column mapping
 ================================================================================
 */
+
+/* ================================================================================
+SNOWPIPE SETUP FOR AUTOMATED LOADING
+================================================================================
+All Snowpipes configured to monitor DATA_STAGE for incoming files
+*/
+
+-- Snowpipe for automated claims data loading with schema detection support
+CREATE OR REPLACE PIPE RAW_DATA.CLAIMS_DATA_PIPE
+    AUTO_INGEST = TRUE
+    AS
+    COPY INTO RAW_DATA.CLAIMS_RAW 
+    FROM @DATA_STAGE
+    PATTERN = '.*claim_data.*\.csv'
+    FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
+    MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
+    ON_ERROR = CONTINUE;
+-- Manually refresh pipes to process any staged files
+ALTER PIPE CLAIMS_DATA_PIPE REFRESH;
+
 
 -- Load customer data from Git repository
 COPY INTO RAW_DATA.CUSTOMERS_RAW
@@ -286,43 +311,15 @@ FROM @DATA_STAGE/broker_profiles.json
 FILE_FORMAT = (FORMAT_NAME = 'JSON_FORMAT')
 MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
 
-/* ================================================================================
-SNOWPIPE SETUP FOR AUTOMATED LOADING
-================================================================================
-All Snowpipes configured to monitor DATA_STAGE for incoming files
-*/
 
--- Snowpipe for automated claims data loading with schema detection support
-CREATE OR REPLACE PIPE RAW_DATA.CLAIMS_DATA_PIPE
-    AUTO_INGEST = TRUE
-    AS
-    COPY INTO RAW_DATA.CLAIMS_RAW 
-    FROM @DATA_STAGE
-    PATTERN = '.*claim_data.*\.csv'
-    FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
-    MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
-    ON_ERROR = CONTINUE;
-
--- Load additional files from Git repository for demonstration (if they exist)
--- Note: All files go to DATA_STAGE for unified processing
-/*
-COPY FILES
-    INTO @DATA_STAGE
-    FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
-    PATTERN='.*additional.*\.csv';
-*/
-select * from CLAIMS_RAW;
--- Manually refresh pipes to process any staged files
-ALTER PIPE CLAIMS_DATA_PIPE REFRESH;
-
+select * from CUSTOMERS_RAW;
+select * from BROKERS_RAW;
 select * from CLAIMS_RAW;
 
 /* ================================================================================
 PRIVILEGE GRANTS FOR WORKSHOP ROLES
 ================================================================================
 */
-
-
 use role workshop_analyst;
 
 select * from claims_raw;
@@ -334,14 +331,6 @@ USE ROLE ACCOUNTADMIN;
 GRANT SELECT, INSERT ON TABLE RAW_DATA.CUSTOMERS_RAW TO ROLE WORKSHOP_ANALYST;
 GRANT SELECT, INSERT ON TABLE RAW_DATA.CLAIMS_RAW TO ROLE WORKSHOP_ANALYST;
 GRANT SELECT, INSERT ON TABLE RAW_DATA.BROKERS_RAW TO ROLE WORKSHOP_ANALYST;
-
--- Grant stage access
-GRANT READ, WRITE ON STAGE RAW_DATA.DATA_STAGE TO ROLE WORKSHOP_ANALYST;
-GRANT READ, WRITE ON STAGE RAW_DATA.DOCUMENT_STAGE TO ROLE WORKSHOP_ANALYST;
-
--- Grant file format usage
-GRANT USAGE ON FILE FORMAT RAW_DATA.CSV_FORMAT TO ROLE WORKSHOP_ANALYST;
-GRANT USAGE ON FILE FORMAT RAW_DATA.JSON_FORMAT TO ROLE WORKSHOP_ANALYST;
 
 use role workshop_analyst;
 select * from claims_raw;
@@ -393,30 +382,26 @@ SELECT
 FROM RAW_DATA.CUSTOMERS_RAW c
 INNER JOIN RAW_DATA.CLAIMS_RAW cl ON c.POLICY_NUMBER = cl.POLICY_NUMBER;
 
--- Check pipe status
-SELECT SYSTEM$PIPE_STATUS('CLAIMS_DATA_PIPE') as CLAIMS_PIPE_STATUS;
-
 /* ================================================================================
-FOUNDATION SETUP COMPLETE WITH GIT INTEGRATION & SCHEMA DETECTION
+ADDITIONAL DATA LOADING FROM GIT REPOSITORY
 ================================================================================
-Setup Complete:
-• Database: INSURANCE_WORKSHOP_DB with 4 schemas
-• Warehouses: WORKSHOP_COMPUTE_WH, WORKSHOP_OPS_WH  
-• Roles: WORKSHOP_ANALYST, BROKER_CONSUMER
-• Git Integration: Connected to MrHarBear/SRG_Workshop_2025_07
-• Tables: CUSTOMERS_RAW (1,200), CLAIMS_RAW (1,001 - schema detected), BROKERS_RAW (20 - schema detected)
-• Automation: 3 Snowpipes for continuous data loading from unified data stage
-• Schema Detection: Applied to CLAIMS_RAW and BROKERS_RAW for automated discovery
-• Validation: Referential integrity confirmed with Git-sourced data
-
-Enhanced Features:
-• Automated Git repository integration for data source management
-• Schema detection for CLAIMS_RAW (CSV) and BROKERS_RAW (JSON) using INFER_SCHEMA function
-• Automatic table creation using USING TEMPLATE for detected schemas
-• Simplified stage architecture: DATA_STAGE (all CSV/JSON files) and DOCUMENT_STAGE
-• Unified data processing from single stage for improved management
-• Clean data model without pipeline tracking columns for simplified workshop focus
-
-Ready for: Phase 2 - Data Quality Monitoring implementation
+Load data into schema-detected tables with automatic column mapping and Snowpipe
 ================================================================================
-*/ 
+*/
+-- Check pipe status
+-- SELECT SYSTEM$PIPE_STATUS('CLAIMS_DATA_PIPE') as CLAIMS_PIPE_STATUS;
+-- Load all data files from Git repository to unified data stage
+-- COPY FILES
+--     INTO @DATA_STAGE
+--     FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
+--     PATTERN='.*claim_data_.*.csv';
+
+-- COPY FILES
+--     INTO @DATA_STAGE
+--     FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
+--     PATTERN='.*customer_data_.*.csv';
+
+-- COPY INTO RAW_DATA.CUSTOMERS_RAW
+-- FROM @DATA_STAGE/customer_data_with_errors.csv
+-- FILE_FORMAT = (FORMAT_NAME = 'CSV_FORMAT')
+-- MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
