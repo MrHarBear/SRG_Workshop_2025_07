@@ -266,15 +266,6 @@ FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
 GROUP BY BROKER_ID;
 
 /* ================================================================================
-GRANT PERMISSIONS FOR WORKSHOP ROLES
-================================================================================
-*/
-
--- Grant access to analytics tables and UDFs
-GRANT SELECT ON ALL DYNAMIC TABLES IN SCHEMA ANALYTICS TO ROLE WORKSHOP_ANALYST;
-GRANT USAGE ON ALL FUNCTIONS IN SCHEMA ANALYTICS TO ROLE WORKSHOP_ANALYST;
-
-/* ================================================================================
 STREAMLINED RISK ANALYTICS SETUP COMPLETE
 ================================================================================
 Implementation Complete:
@@ -301,3 +292,5 @@ Business Intelligence:
 Ready for: Phase 3 - Governance Implementation and Phase 4 - Visualization Dashboards
 ================================================================================
 */ 
+
+select top 10 * from RISK_INTELLIGENCE_DASHBOARD;

@@ -8,7 +8,7 @@ from snowflake.snowpark.context import get_active_session
 
 # Insurance Workshop Data Quality Dashboard
 # Purpose: Real-time data quality monitoring with DMF results
-# Scope: Three-entity quality tracking with Snowflake branding
+# Scope: Two-entity quality tracking with Snowflake branding
 
 st.set_page_config(
     page_title="Insurance Workshop - Data Quality Monitoring",
@@ -70,6 +70,13 @@ st.markdown(f"""
         margin: 15px 0;
         color: {COLORS['medium_gray']};
     }}
+    .row-count-card {{
+        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 4px solid {COLORS['main']};
+        margin: 10px 0;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,7 +92,7 @@ def get_quality_monitoring_data():
         
         # Entity quality scores
         try:
-            results['entity_scores'] = session.sql("""
+            entity_scores_df = session.sql("""
                 SELECT 
                     entity_name,
                     total_metrics,
@@ -98,6 +105,10 @@ def get_quality_monitoring_data():
                 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.ENTITY_QUALITY_SCORES
                 ORDER BY overall_quality_score DESC
             """).to_pandas()
+            
+            # Normalize column names to lowercase
+            entity_scores_df.columns = entity_scores_df.columns.str.lower()
+            results['entity_scores'] = entity_scores_df
             
             # Debug: Log successful fetch
             if not results['entity_scores'].empty:
@@ -150,20 +161,10 @@ def get_quality_monitoring_data():
                         3 as critical_count,
                         20.0 as overall_quality_score,
                         CURRENT_TIMESTAMP() as last_measured
-                    
-                    UNION ALL
-                    
-                    SELECT 
-                        'BROKERS_RAW' as entity_name,
-                        3 as total_metrics,
-                        0 as excellent_count,
-                        0 as good_count,
-                        0 as warning_count,
-                        3 as critical_count,
-                        20.0 as overall_quality_score,
-                        CURRENT_TIMESTAMP() as last_measured
                 """).to_pandas()
                 
+                # Normalize column names to lowercase
+                fallback_data.columns = fallback_data.columns.str.lower()
                 results['entity_scores'] = fallback_data
                 st.warning("⚠️ Using fallback data. Run 01_DATA_QUALITY.sql to get real quality metrics.")
                 
@@ -173,7 +174,7 @@ def get_quality_monitoring_data():
         
         # Detailed quality monitoring summary
         try:
-            results['quality_summary'] = session.sql("""
+            quality_summary_df = session.sql("""
                 SELECT 
                     table_name,
                     metric_name,
@@ -183,6 +184,10 @@ def get_quality_monitoring_data():
                 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.QUALITY_MONITORING_SUMMARY
                 ORDER BY measurement_time DESC
             """).to_pandas()
+            
+            # Normalize column names to lowercase
+            quality_summary_df.columns = quality_summary_df.columns.str.lower()
+            results['quality_summary'] = quality_summary_df
             
             # Debug: Log successful fetch
             if not results['quality_summary'].empty:
@@ -229,17 +234,10 @@ def get_quality_monitoring_data():
                         5 as metric_value,
                         'WARNING' as quality_status,
                         CURRENT_TIMESTAMP() as measurement_time
-                    
-                    UNION ALL
-                    
-                    SELECT 
-                        'BROKERS_RAW' as table_name,
-                        'INVALID_COUNT' as metric_name,
-                        10 as metric_value,
-                        'CRITICAL' as quality_status,
-                        CURRENT_TIMESTAMP() as measurement_time
                 """).to_pandas()
                 
+                # Normalize column names to lowercase
+                fallback_quality.columns = fallback_quality.columns.str.lower()
                 results['quality_summary'] = fallback_quality
                 st.warning("⚠️ Using fallback quality summary data. Run 01_DATA_QUALITY.sql to get real metrics.")
                 
@@ -250,7 +248,7 @@ def get_quality_monitoring_data():
         # Relationship integrity metrics - try different column name variations
         try:
             # Only focus on customer-claims relationship since brokers are removed
-            results['relationship_metrics'] = session.sql("""
+            relationship_df = session.sql("""
                 SELECT 
                     'CUSTOMER_CLAIMS_INTEGRITY' as relationship_type,
                     COUNT(DISTINCT c.POLICY_NUMBER) as total_customers,
@@ -266,13 +264,18 @@ def get_quality_monitoring_data():
                 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW c
                 LEFT JOIN INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_RAW cl ON c.POLICY_NUMBER = cl.POLICY_NUMBER
             """).to_pandas()
+            
+            # Normalize column names to lowercase
+            relationship_df.columns = relationship_df.columns.str.lower()
+            results['relationship_metrics'] = relationship_df
+            
         except Exception as e:
             st.warning(f"Could not fetch relationship metrics: {str(e)}")
             results['relationship_metrics'] = pd.DataFrame()
         
         # Data quality issue identification using SYSTEM$DATA_METRIC_SCAN
         try:
-            results['quality_issues'] = session.sql("""
+            quality_issues_df = session.sql("""
                 SELECT 
                     'NULL_POLICY_NUMBERS_CUSTOMERS' as issue_type,
                     COUNT(*) as affected_records,
@@ -303,6 +306,11 @@ def get_quality_monitoring_data():
                     'CLAIMS_RAW' as table_name
                 FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES
             """).to_pandas()
+            
+            # Normalize column names to lowercase
+            quality_issues_df.columns = quality_issues_df.columns.str.lower()
+            results['quality_issues'] = quality_issues_df
+            
         except Exception as e:
             st.warning(f"Could not fetch quality issues: {str(e)}")
             results['quality_issues'] = pd.DataFrame()
@@ -325,36 +333,251 @@ def get_quality_monitoring_data():
             st.warning(f"Could not create DMF status: {str(e)}")
             results['dmf_status'] = pd.DataFrame()
         
+        # Row count metrics for separate display
+        try:
+            row_counts_df = session.sql("""
+                SELECT 
+                    table_name,
+                    metric_value as row_count,
+                    measurement_time
+                FROM INSURANCE_WORKSHOP_DB.RAW_DATA.QUALITY_MONITORING_SUMMARY
+                WHERE metric_name = 'SNOWFLAKE.CORE.ROW_COUNT'
+                ORDER BY table_name
+            """).to_pandas()
+            
+            # Normalize column names to lowercase
+            row_counts_df.columns = row_counts_df.columns.str.lower()
+            results['row_counts'] = row_counts_df
+            
+        except Exception as e:
+            st.warning(f"Could not fetch row counts: {str(e)}")
+            results['row_counts'] = pd.DataFrame()
+        
         return results
         
     except Exception as e:
         st.error(f"Error fetching quality monitoring data: {str(e)}")
         return {}
 
-@st.cache_data(ttl=60)
-def get_historical_trends():
-    """Get historical quality trends for trend analysis"""
-    
+def get_problematic_records(table_name: str, metric_name: str, limit: int = 50) -> tuple[pd.DataFrame, str]:
+    """Get records that have issues based on the selected table and metric - using exact DMF logic"""
     try:
-        # Get historical trend data from quality monitoring view
-        historical_data = session.sql("""
-            SELECT 
-                table_name,
-                DATE_TRUNC('hour', measurement_time) as hour_bucket,
-                metric_name,
-                AVG(metric_value) as avg_metric_value,
-                COUNT(*) as measurement_count
-            FROM INSURANCE_WORKSHOP_DB.RAW_DATA.QUALITY_MONITORING_SUMMARY
-            WHERE measurement_time >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-            GROUP BY table_name, hour_bucket, metric_name
-            ORDER BY hour_bucket DESC
-        """).to_pandas()
+        query = ""
         
-        return historical_data
+        # Debug: Uncomment below line if needed for troubleshooting
+        # st.info(f"🔍 Debug - Table: '{table_name}', Metric: '{metric_name}'")
         
+        # Normalize inputs for robust matching
+        table_name_upper = table_name.upper()
+        metric_name_upper = metric_name.upper()
+        
+        # Handle CUSTOMERS_RAW table
+        if table_name_upper == "CUSTOMERS_RAW":
+            if metric_name_upper == "INVALID_CUSTOMER_AGE_COUNT":
+                # Use exact DMF logic: AGE IS NOT NULL AND (AGE < 18 OR AGE > 85)
+                query = f"""
+                SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW
+                WHERE AGE IS NOT NULL AND (AGE < 18 OR AGE > 85)
+                ORDER BY AGE DESC
+                LIMIT {limit}
+                """
+                
+            elif metric_name_upper == "INVALID_BROKER_ID_COUNT":
+                # Use exact DMF logic: BROKER_ID IS NOT NULL AND NOT REGEXP_LIKE(BROKER_ID, '^BRK[0-9]{{3}}$')
+                query = f"""
+                SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW
+                WHERE BROKER_ID IS NOT NULL 
+                  AND NOT REGEXP_LIKE(BROKER_ID, '^BRK[0-9]{{3}}$')
+                ORDER BY POLICY_NUMBER
+                LIMIT {limit}
+                """
+                
+            elif metric_name_upper in ["SNOWFLAKE.CORE.NULL_COUNT", "NULL_COUNT"]:
+                # Use the existing SYSTEM$DATA_METRIC_SCAN view
+                query = f"""
+                SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_WITH_NULL_POLICY_NUMBERS
+                ORDER BY POLICY_NUMBER
+                LIMIT {limit}
+                """
+                
+            elif metric_name_upper in ["SNOWFLAKE.CORE.DUPLICATE_COUNT", "DUPLICATE_COUNT"]:
+                # Use the existing SYSTEM$DATA_METRIC_SCAN view
+                query = f"""
+                SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_WITH_DUPLICATE_POLICIES
+                ORDER BY POLICY_NUMBER
+                LIMIT {limit}
+                """
+                
+        # Handle CLAIMS_RAW table
+        elif table_name_upper == "CLAIMS_RAW":
+            if metric_name_upper in ["SNOWFLAKE.CORE.NULL_COUNT", "NULL_COUNT"]:
+                # Use the existing SYSTEM$DATA_METRIC_SCAN view
+                query = f"""
+                SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_WITH_NULL_POLICY_NUMBERS
+                ORDER BY POLICY_NUMBER
+                LIMIT {limit}
+                """
+                
+            elif metric_name_upper in ["SNOWFLAKE.CORE.DUPLICATE_COUNT", "DUPLICATE_COUNT"]:
+                # Use the existing SYSTEM$DATA_METRIC_SCAN view
+                query = f"""
+                SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES
+                ORDER BY POLICY_NUMBER
+                LIMIT {limit}
+                """
+        
+        # Default fallback query
+        if not query:
+            st.warning(f"⚠️ No specific query logic found for {table_name} + {metric_name}. Using fallback query.")
+            query = f"""
+            SELECT * FROM INSURANCE_WORKSHOP_DB.RAW_DATA.{table_name_upper}
+            ORDER BY 1
+            LIMIT {limit}
+            """
+        
+        # Execute the query
+        result = session.sql(query).collect()
+        if result:
+            df = session.create_dataframe(result).to_pandas()
+            return df, query
+        else:
+            return pd.DataFrame(), query
+            
     except Exception as e:
-        st.warning(f"Historical trend data not available: {str(e)}")
-        return pd.DataFrame()
+        st.error(f"Error fetching problematic records for {metric_name} on {table_name}: {e}")
+        return pd.DataFrame(), query if 'query' in locals() else ""
+
+def display_drill_down_analysis(quality_summary: pd.DataFrame):
+    """Display drill-down analysis section for problematic records"""
+    
+    if quality_summary.empty:
+        st.info("No quality summary data available for drill-down analysis.")
+        return
+    
+    # Filter out ROW_COUNT metrics and UNKNOWN status from the dropdown as they don't represent "problems"
+    non_row_count_metrics = quality_summary[
+        (quality_summary['metric_name'] != 'SNOWFLAKE.CORE.ROW_COUNT') &
+        (quality_summary['quality_status'] != 'UNKNOWN')
+    ].copy()
+    
+    if non_row_count_metrics.empty:
+        st.info("No quality metrics with potential issues available for analysis.")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        table_options = ["Select a table..."] + list(non_row_count_metrics['table_name'].unique())
+        selected_table = st.selectbox(
+            "Select a table:",
+            table_options,
+            key="table_selector"
+        )
+    
+    with col2:
+        if selected_table != "Select a table...":
+            table_metrics = non_row_count_metrics[
+                non_row_count_metrics['table_name'] == selected_table
+            ]
+            metric_options = ["Select a metric..."] + list(table_metrics['metric_name'].unique())
+            selected_metric = st.selectbox(
+                "Select a data quality metric:",
+                metric_options,
+                key="metric_selector"
+            )
+        else:
+            selected_metric = "Select a metric..."
+            st.selectbox(
+                "Select a data quality metric:",
+                ["First select a table..."],
+                disabled=True,
+                key="metric_selector_disabled"
+            )
+    
+    if selected_table != "Select a table..." and selected_metric != "Select a metric...":
+        # Get current metric value
+        current_record = non_row_count_metrics[
+            (non_row_count_metrics['table_name'] == selected_table) & 
+            (non_row_count_metrics['metric_name'] == selected_metric)
+        ]
+        
+        if not current_record.empty:
+            current_value = current_record['metric_value'].iloc[0]
+            quality_status = current_record['quality_status'].iloc[0]
+            
+            # Convert current_value to numeric, handle string values
+            try:
+                current_value_numeric = float(current_value)
+            except (ValueError, TypeError):
+                current_value_numeric = 0
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Current Issues Found", f"{current_value_numeric:,.0f}")
+            with col2:
+                status_color = {
+                    'EXCELLENT': '🟢',
+                    'GOOD': '🔵', 
+                    'WARNING': '🟡',
+                    'CRITICAL': '🔴'
+                }.get(quality_status, '⚪')
+                st.metric("Quality Status", f"{status_color} {quality_status}")
+            with col3:
+                last_measured = current_record['measurement_time'].iloc[0]
+                st.metric("Last Measured", last_measured.strftime("%Y-%m-%d %H:%M") if pd.notna(last_measured) else "N/A")
+            
+            if current_value_numeric > 0:
+                st.markdown("---")
+                with st.spinner("Fetching problematic records..."):
+                    problematic_records, query_used = get_problematic_records(selected_table, selected_metric, 100)
+                
+                if not problematic_records.empty:
+                    # Create tabs for data and query
+                    tab1, tab2 = st.tabs(["📊 Problematic Records", "💻 SQL Query"])
+                    
+                    with tab1:
+                        # Add explanation for the difference between DMF count and record count
+                        if "DUPLICATE" in selected_metric.upper():
+                            st.info(f"""
+                            **DMF Count ({current_value_numeric:,.0f})**: Number of distinct values that have duplicates  
+                            **Records Shown ({len(problematic_records)})**: All individual records that are part of duplicates  
+                            
+                            Example: If policy "ABC123" appears 3 times, DMF counts it as 1 duplicate, but shows all 3 records.
+                            """)
+                        elif "NULL" in selected_metric.upper():
+                            st.info(f"""
+                            **DMF Count ({current_value_numeric:,.0f})**: Number of records with NULL values  
+                            **Records Shown ({len(problematic_records)})**: All individual records with NULL values  
+                            (These numbers should match for NULL counts)
+                            """)
+                        else:
+                            st.info(f"Found {len(problematic_records)} records with issues")
+                        
+                        st.dataframe(
+                            problematic_records, 
+                            use_container_width=True,
+                            height=400
+                        )
+                        
+                        # Download functionality
+                        csv = problematic_records.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Problematic Records as CSV",
+                            data=csv,
+                            file_name=f"problematic_records_{selected_table}_{selected_metric}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv"
+                        )
+                    
+                    with tab2:
+                        st.subheader("SQL Query Used")
+                        st.code(query_used, language="sql")
+                        
+                else:
+                    st.info("No problematic records found using the current query logic.")
+            else:
+                st.success("✅ No issues found for this metric!")
+    else:
+        st.info("👆 Select a table and metric above to see detailed analysis of problematic records.")
 
 # Dashboard Header
 st.markdown('<div class="main-header">Insurance Workshop - Data Quality Monitoring</div>', 
@@ -414,7 +637,6 @@ if auto_refresh:
 
 # Fetch data
 quality_data = get_quality_monitoring_data()
-historical_data = get_historical_trends()
 
 if not quality_data:
     st.error("Unable to load quality monitoring data. Please check your session context.")
@@ -461,6 +683,22 @@ if 'entity_scores' in quality_data and not quality_data['entity_scores'].empty:
                     <small style="color: {COLORS['medium_gray']};">Last measured: {entity['last_measured']}</small>
                 </div>
                 """, unsafe_allow_html=True)
+        
+        # Add row count information in a separate section
+        if 'row_counts' in quality_data and not quality_data['row_counts'].empty:
+            st.markdown("**📊 Table Volume Metrics**")
+            row_counts = quality_data['row_counts']
+            
+            cols = st.columns(len(row_counts))
+            for idx, (_, row) in enumerate(row_counts.iterrows()):
+                with cols[idx]:
+                    st.markdown(f"""
+                    <div class="row-count-card">
+                        <h4 style="color: {COLORS['mid_blue']}; margin: 0;">{row['table_name'].replace('_RAW', '')} Records</h4>
+                        <h2 style="color: {COLORS['main']}; margin: 10px 0;">{row['row_count']:,}</h2>
+                        <small style="color: {COLORS['medium_gray']};">Last updated: {row['measurement_time']}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
 else:
     st.warning("⚠️ Entity quality scores data is not available. This could mean:")
     st.markdown("""
@@ -489,67 +727,80 @@ if 'quality_summary' in quality_data and not quality_data['quality_summary'].emp
         st.info(f"Available columns: {', '.join(quality_summary.columns.tolist())}")
         st.info("Please ensure the QUALITY_MONITORING_SUMMARY view exists and contains all required columns.")
     else:
+        # Separate ROW_COUNT metrics from quality metrics and filter out UNKNOWN status
+        row_count_metrics = quality_summary[quality_summary['metric_name'] == 'SNOWFLAKE.CORE.ROW_COUNT']
+        quality_metrics = quality_summary[
+            (quality_summary['metric_name'] != 'SNOWFLAKE.CORE.ROW_COUNT') &
+            (quality_summary['quality_status'] != 'UNKNOWN')
+        ]
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**Quality Status Distribution**")
+            st.markdown("**Quality Status Distribution** (Excluding Row Counts)")
             
             try:
-                status_counts = quality_summary['quality_status'].value_counts()
-                
-                if len(status_counts) > 0:
-                    # Create pie chart with Snowflake colors
-                    fig_status = px.pie(
-                        values=status_counts.values,
-                        names=status_counts.index,
-                        color_discrete_map={
-                            'EXCELLENT': COLORS['star_blue'],
-                            'GOOD': COLORS['main'],
-                            'WARNING': COLORS['valencia_orange'],
-                            'CRITICAL': COLORS['first_light']
-                        },
-                        title="Current Quality Status Distribution"
-                    )
-                    fig_status.update_layout(
-                        title_font_color=COLORS['mid_blue'],
-                        height=350
-                    )
-                    st.plotly_chart(fig_status, use_container_width=True)
+                if not quality_metrics.empty:
+                    status_counts = quality_metrics['quality_status'].value_counts()
+                    
+                    if len(status_counts) > 0:
+                        # Create pie chart with Snowflake colors
+                        fig_status = px.pie(
+                            values=status_counts.values,
+                            names=status_counts.index,
+                            color_discrete_map={
+                                'EXCELLENT': COLORS['star_blue'],
+                                'GOOD': COLORS['main'],
+                                'WARNING': COLORS['valencia_orange'],
+                                'CRITICAL': COLORS['first_light']
+                            },
+                            title="Current Quality Status Distribution"
+                        )
+                        fig_status.update_layout(
+                            title_font_color=COLORS['mid_blue'],
+                            height=350
+                        )
+                        st.plotly_chart(fig_status, use_container_width=True)
+                    else:
+                        st.info("No quality status data available for visualization.")
                 else:
-                    st.info("No quality status data available for visualization.")
+                    st.info("No quality metrics data available (excluding row counts).")
                     
             except Exception as e:
                 st.error(f"Error creating status distribution chart: {str(e)}")
         
         with col2:
-            st.markdown("**Metrics by Entity**")
+            st.markdown("**Quality Metrics by Entity** (Excluding Row Counts)")
             
             try:
-                # Group by table and count metrics
-                entity_metrics = quality_summary.groupby(['table_name', 'quality_status']).size().reset_index(name='count')
-                
-                if not entity_metrics.empty:
-                    fig_entity = px.bar(
-                        entity_metrics,
-                        x='table_name',
-                        y='count',
-                        color='quality_status',
-                        color_discrete_map={
-                            'EXCELLENT': COLORS['star_blue'],
-                            'GOOD': COLORS['main'],
-                            'WARNING': COLORS['valencia_orange'],
-                            'CRITICAL': COLORS['first_light']
-                        },
-                        title="Quality Metrics by Entity",
-                        labels={'table_name': 'Entity', 'count': 'Metric Count'}
-                    )
-                    fig_entity.update_layout(
-                        title_font_color=COLORS['mid_blue'],
-                        height=350
-                    )
-                    st.plotly_chart(fig_entity, use_container_width=True)
+                if not quality_metrics.empty:
+                    # Group by table and count metrics
+                    entity_metrics = quality_metrics.groupby(['table_name', 'quality_status']).size().reset_index(name='count')
+                    
+                    if not entity_metrics.empty:
+                        fig_entity = px.bar(
+                            entity_metrics,
+                            x='table_name',
+                            y='count',
+                            color='quality_status',
+                            color_discrete_map={
+                                'EXCELLENT': COLORS['star_blue'],
+                                'GOOD': COLORS['main'],
+                                'WARNING': COLORS['valencia_orange'],
+                                'CRITICAL': COLORS['first_light']
+                            },
+                            title="Quality Metrics by Entity",
+                            labels={'table_name': 'Entity', 'count': 'Metric Count'}
+                        )
+                        fig_entity.update_layout(
+                            title_font_color=COLORS['mid_blue'],
+                            height=350
+                        )
+                        st.plotly_chart(fig_entity, use_container_width=True)
+                    else:
+                        st.info("No entity metrics data available for visualization.")
                 else:
-                    st.info("No entity metrics data available for visualization.")
+                    st.info("No quality metrics data available for entity breakdown.")
                     
             except Exception as e:
                 st.error(f"Error creating entity metrics chart: {str(e)}")
@@ -571,52 +822,71 @@ st.markdown('<div class="section-header">Detailed Quality Metrics</div>', unsafe
 
 if 'quality_summary' in quality_data and not quality_data['quality_summary'].empty:
     
-    # Filter controls
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        selected_entity = st.selectbox(
-            "Select Entity",
-            ['All'] + list(quality_summary['table_name'].unique())
-        )
-    with col2:
-        selected_status = st.selectbox(
-            "Filter by Status",
-            ['All', 'CRITICAL', 'WARNING', 'GOOD', 'EXCELLENT']
-        )
-    with col3:
-        show_recent = st.checkbox("Show only recent (last hour)", value=True)
+    # Filter out ROW_COUNT and UNKNOWN status for the detailed view as well
+    detailed_quality = quality_summary[
+        (quality_summary['metric_name'] != 'SNOWFLAKE.CORE.ROW_COUNT') &
+        (quality_summary['quality_status'] != 'UNKNOWN')
+    ].copy()
     
-    # Apply filters
-    filtered_data = quality_summary.copy()
-    
-    if selected_entity != 'All':
-        filtered_data = filtered_data[filtered_data['table_name'] == selected_entity]
-    
-    if selected_status != 'All':
-        filtered_data = filtered_data[filtered_data['quality_status'] == selected_status]
-    
-    if show_recent:
-        one_hour_ago = datetime.now() - timedelta(hours=1)
-        filtered_data = filtered_data[pd.to_datetime(filtered_data['measurement_time']) >= one_hour_ago]
-    
-    # Display filtered results
-    if not filtered_data.empty:
-        # Style the dataframe
-        def style_quality_status(val):
-            if val == 'EXCELLENT':
-                return f'background-color: {COLORS["star_blue"]}; color: white'
-            elif val == 'GOOD':
-                return f'background-color: {COLORS["main"]}; color: white'
-            elif val == 'WARNING':
-                return f'background-color: {COLORS["valencia_orange"]}; color: white'
-            elif val == 'CRITICAL':
-                return f'background-color: {COLORS["first_light"]}; color: white'
-            return ''
+    if not detailed_quality.empty:
+        # Filter controls
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            selected_entity = st.selectbox(
+                "Select Entity",
+                ['All'] + list(detailed_quality['table_name'].unique())
+            )
+        with col2:
+            selected_status = st.selectbox(
+                "Filter by Status",
+                ['All', 'CRITICAL', 'WARNING', 'GOOD', 'EXCELLENT']
+            )
+        with col3:
+            show_recent = st.checkbox("Show only recent (last hour)", value=True)
         
-        styled_df = filtered_data.style.applymap(style_quality_status, subset=['quality_status'])
-        st.dataframe(styled_df, use_container_width=True)
+        # Apply filters
+        filtered_data = detailed_quality.copy()
+        
+        if selected_entity != 'All':
+            filtered_data = filtered_data[filtered_data['table_name'] == selected_entity]
+        
+        if selected_status != 'All':
+            filtered_data = filtered_data[filtered_data['quality_status'] == selected_status]
+        
+        if show_recent:
+            one_hour_ago = datetime.now() - timedelta(hours=1)
+            # Convert measurement_time to timezone-naive for comparison
+            measurement_time_naive = pd.to_datetime(filtered_data['measurement_time']).dt.tz_localize(None)
+            filtered_data = filtered_data[measurement_time_naive >= one_hour_ago]
+        
+        # Display filtered results
+        if not filtered_data.empty:
+            # Style the dataframe
+            def style_quality_status(val):
+                if val == 'EXCELLENT':
+                    return f'background-color: {COLORS["star_blue"]}; color: white'
+                elif val == 'GOOD':
+                    return f'background-color: {COLORS["main"]}; color: white'
+                elif val == 'WARNING':
+                    return f'background-color: {COLORS["valencia_orange"]}; color: white'
+                elif val == 'CRITICAL':
+                    return f'background-color: {COLORS["first_light"]}; color: white'
+                return ''
+            
+            styled_df = filtered_data.style.applymap(style_quality_status, subset=['quality_status'])
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.info("No data matches the selected filters.")
     else:
-        st.info("No data matches the selected filters.")
+        st.info("No quality metrics available for detailed view (excluding row counts).")
+
+# Drill-Down Analysis for Problematic Records
+st.markdown('<div class="section-header">🔍 Drill-Down Analysis</div>', unsafe_allow_html=True)
+
+if 'quality_summary' in quality_data and not quality_data['quality_summary'].empty:
+    display_drill_down_analysis(quality_data['quality_summary'])
+else:
+    st.info("No quality summary data available for drill-down analysis.")
 
 # Relationship Integrity Analysis
 st.markdown('<div class="section-header">Relationship Integrity Analysis</div>', unsafe_allow_html=True)
@@ -817,7 +1087,7 @@ if 'dmf_status' in quality_data and not quality_data['dmf_status'].empty:
         st.markdown(f"""
         <div class="dmf-note">
         <strong>DMF Configuration:</strong> This section shows the status of all Data Metric Functions 
-        configured for automated quality monitoring across the three-entity model.
+        configured for automated quality monitoring across the two-entity model.
         </div>
         """, unsafe_allow_html=True)
         
@@ -856,26 +1126,6 @@ else:
     3. Verify your role has access to DMF metadata
     """)
 
-# Historical Trends (if available)
-if not historical_data.empty:
-    st.markdown('<div class="section-header">Quality Trends</div>', unsafe_allow_html=True)
-    
-    # Simple trend visualization
-    fig_trend = px.line(
-        historical_data,
-        x='hour_bucket',
-        y='avg_metric_value',
-        color='table_name',
-        facet_col='metric_name',
-        title="Quality Metrics Trend (Last 24 Hours)",
-        color_discrete_sequence=[COLORS['main'], COLORS['valencia_orange'], COLORS['purple_moon']]
-    )
-    fig_trend.update_layout(
-        title_font_color=COLORS['mid_blue'],
-        height=400
-    )
-    st.plotly_chart(fig_trend, use_container_width=True)
-
 # System Health Summary
 st.markdown('<div class="section-header">System Health Summary</div>', unsafe_allow_html=True)
 
@@ -895,7 +1145,12 @@ if quality_data:
         if 'quality_summary' in quality_data and not quality_data['quality_summary'].empty:
             try:
                 if 'quality_status' in quality_data['quality_summary'].columns:
-                    critical_count = len(quality_data['quality_summary'][quality_data['quality_summary']['quality_status'] == 'CRITICAL'])
+                    # Exclude ROW_COUNT and UNKNOWN from critical issues
+                    quality_only = quality_data['quality_summary'][
+                        (quality_data['quality_summary']['metric_name'] != 'SNOWFLAKE.CORE.ROW_COUNT') &
+                        (quality_data['quality_summary']['quality_status'] != 'UNKNOWN')
+                    ]
+                    critical_count = len(quality_only[quality_only['quality_status'] == 'CRITICAL'])
                     st.metric("Critical Issues", critical_count, delta=None if critical_count == 0 else f"-{critical_count}")
                 else:
                     st.metric("Critical Issues", "N/A", delta="No status data")

@@ -8,6 +8,8 @@ Scope: Database infrastructure, automated ingestion, initial data loading
 */
 
 USE ROLE ACCOUNTADMIN;
+ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION';
+
 USE SECONDARY ROLES NONE;
 
 -- Clean start for workshop consistency
