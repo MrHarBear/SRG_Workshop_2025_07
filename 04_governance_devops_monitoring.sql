@@ -37,6 +37,7 @@ CRITICAL TABLE MONITORING ALERT
 */
 
 -- Create alert to monitor critical analytics table existence
+-- Alerts could be used for many different areas, e.g. DQ, Data Pipeline Issues, Data Pipeline Status
 CREATE OR REPLACE ALERT GOVERNANCE.RISK_DASHBOARD_MONITOR
     SCHEDULE = '1 MINUTE'  -- Check every 2 minutes for demo purposes
     IF (EXISTS (
