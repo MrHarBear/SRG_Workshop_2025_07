@@ -73,6 +73,8 @@ SYSTEM DMF APPLICATION TO TABLES
 */
 -- Set automated monitoring schedule for customer and claims tables only
 ALTER TABLE RAW_DATA.CUSTOMERS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
+-- Set the data metric function schedule to run at 8:00 AM on weekdays only: 'USING CRON 0 8 * * MON,TUE,WED,THU,FRI UTC';
+-- DATA_METRIC_SCHEDULE = 'TRIGGER_ON_CHANGES';
 ALTER TABLE RAW_DATA.CLAIMS_RAW SET DATA_METRIC_SCHEDULE = '5 minute';
 
 -- CUSTOMERS TABLE: Custom + System DMFs
@@ -215,51 +217,6 @@ FROM TABLE(SYSTEM$DATA_METRIC_SCAN(
 ));
 
 /* ================================================================================
-DATA REMEDIATION EXAMPLES - DEMO PURPOSES
-================================================================================
-Show how SYSTEM$DATA_METRIC_SCAN can be used for data fixing
-Note: These are demo queries - run carefully in production
-*/
-
--- Demo: Count of records that would be affected by remediation
-SELECT 
-    'NULL_POLICY_NUMBERS_CUSTOMERS' as issue_type,
-    COUNT(*) as affected_records
-FROM RAW_DATA.CUSTOMERS_WITH_NULL_POLICY_NUMBERS
-
-UNION ALL
-
-SELECT 
-    'DUPLICATE_POLICY_NUMBERS_CUSTOMERS' as issue_type,
-    COUNT(*) as affected_records
-FROM RAW_DATA.CUSTOMERS_WITH_DUPLICATE_POLICIES
-
-UNION ALL
-
-SELECT 
-    'NULL_POLICY_NUMBERS_CLAIMS' as issue_type,
-    COUNT(*) as affected_records
-FROM RAW_DATA.CLAIMS_WITH_NULL_POLICY_NUMBERS
-
-UNION ALL
-
-SELECT 
-    'DUPLICATE_POLICY_NUMBERS_CLAIMS' as issue_type,
-    COUNT(*) as affected_records
-FROM RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES;
-
--- Example remediation query (commented for safety)
-/*
--- Demo: How to fix NULL policy numbers (example only)
-UPDATE INSURANCE_WORKSHOP_DB.RAW_DATA.CUSTOMERS_RAW
-SET POLICY_NUMBER = 'POL_' || UNIFORM(1000000, 9999999, RANDOM())::STRING
-WHERE POLICY_NUMBER IN (
-    SELECT POLICY_NUMBER 
-    FROM RAW_DATA.CUSTOMERS_WITH_NULL_POLICY_NUMBERS
-);
-*/
-
-/* ================================================================================
 MONITOR DATA METRIC FUNCTION RESULTS
 ================================================================================
 */
@@ -281,22 +238,6 @@ WHERE table_database = 'INSURANCE_WORKSHOP_DB'
     AND table_schema = 'RAW_DATA'
     AND table_name IN ('CUSTOMERS_RAW', 'CLAIMS_RAW')
 ORDER BY measurement_time DESC, table_name, metric_name;
-
-/* ================================================================================
-GRANT ACCESS FOR WORKSHOP ROLES
-================================================================================
-*/
-
--- Grant access to quality monitoring views
-GRANT SELECT ON VIEW RAW_DATA.QUALITY_MONITORING_SUMMARY TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW RAW_DATA.ENTITY_QUALITY_SCORES TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW RAW_DATA.RELATIONSHIP_QUALITY_METRICS TO ROLE WORKSHOP_ANALYST;
-
--- Grant access to issue identification views
-GRANT SELECT ON VIEW RAW_DATA.CUSTOMERS_WITH_NULL_POLICY_NUMBERS TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW RAW_DATA.CUSTOMERS_WITH_DUPLICATE_POLICIES TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW RAW_DATA.CLAIMS_WITH_NULL_POLICY_NUMBERS TO ROLE WORKSHOP_ANALYST;
-GRANT SELECT ON VIEW RAW_DATA.CLAIMS_WITH_DUPLICATE_POLICIES TO ROLE WORKSHOP_ANALYST;
 
 /* ================================================================================
 QUALITY VALIDATION REPORT
@@ -333,45 +274,3 @@ SELECT
         ELSE 'CRITICAL'
     END as integrity_grade
 FROM RAW_DATA.RELATIONSHIP_QUALITY_METRICS;
-
-/* ================================================================================
-DATA QUALITY MONITORING SETUP COMPLETE - ENHANCED WITH REMEDIATION
-================================================================================
-Setup Complete:
-• Custom DMFs: 2 SQL functions for essential business validation
-• System DMFs: 8 functions across 2 tables for core data quality
-• Monitoring: 5-minute scheduling for automated quality checks
-• Views: 6 views (3 quality scoring + 3 issue identification) for comprehensive monitoring
-• Coverage: Customers (5 DMFs), Claims (3 DMFs)
-
-Enhanced Quality Framework:
-• Business Rules: Customer age validation, broker ID format validation
-• Data Integrity: NULL checks, duplicate detection with SYSTEM$DATA_METRIC_SCAN
-• Real-time Scoring: Automated quality scoring with status classification
-• Data Remediation: Record-level issue identification for targeted fixes
-
-Custom DMF Focus:
-• INVALID_CUSTOMER_AGE_COUNT: Validates customer age within 18-85 range
-• INVALID_BROKER_ID_COUNT: Ensures broker IDs follow BRK### format pattern
-
-Enhanced Capabilities:
-• SYSTEM$DATA_METRIC_SCAN: Identify specific problematic records for remediation
-• SHOW DATA METRIC FUNCTIONS: Comprehensive DMF inventory and management
-• Issue Identification Views: Pre-built views for common data quality problems
-• Remediation Examples: Sample SQL for fixing identified data quality issues
-
-Quality Issue Detection Views:
-• CUSTOMERS_WITH_NULL_POLICY_NUMBERS: Records needing policy number assignment
-• CUSTOMERS_WITH_DUPLICATE_POLICIES: Duplicate policy records for cleanup
-• CLAIMS_WITH_NULL_POLICY_NUMBERS: Claims missing policy associations
-• CLAIMS_WITH_DUPLICATE_POLICIES: Duplicate claim policy records for resolution
-
-Demo Features:
-• Record-level issue identification using SYSTEM$DATA_METRIC_SCAN
-• Targeted remediation capabilities with example SQL
-• Real-time monitoring with 5-minute scheduling
-• Comprehensive quality scoring and status classification
-
-Ready for: Phase 3 - Advanced Analytics and Governance implementation
-================================================================================
-*/ 

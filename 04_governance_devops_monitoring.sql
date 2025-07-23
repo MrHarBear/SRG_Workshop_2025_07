@@ -80,48 +80,6 @@ ALTER ALERT GOVERNANCE.RISK_DASHBOARD_MONITOR RESUME;
 SHOW ALERTS IN SCHEMA GOVERNANCE;
 
 /* ================================================================================
-ZERO-COPY CLONE FOR GOVERNANCE TESTING
-================================================================================
-*/
-
--- Create development environment using zero-copy cloning
-CREATE OR REPLACE DATABASE INSURANCE_WORKSHOP_DEV 
-    CLONE INSURANCE_WORKSHOP_DB
-    COMMENT = 'Development environment clone for governance testing';
-
--- Create developer role for testing governance policies
-CREATE ROLE IF NOT EXISTS GOVERNANCE_DEVELOPER
-    COMMENT = 'Developer role for governance testing in cloned environment';
-
--- Grant basic privileges to developer role
-GRANT USAGE ON WAREHOUSE WORKSHOP_COMPUTE_WH TO ROLE GOVERNANCE_DEVELOPER;
-
-GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
-GRANT USAGE ON ALL SCHEMAS IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
-GRANT USAGE ON FUTURE SCHEMAS IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
--- Existing objects
-GRANT SELECT ON ALL TABLES IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
-GRANT ALL PRIVILEGES ON ALL TABLES IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
-GRANT ALL PRIVILEGES ON ALL VIEWS IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
-
--- Capture the current Snowflake user in a session variable
-SET CURRENT_EXEC_USER = CURRENT_USER();
-GRANT ROLE GOVERNANCE_DEVELOPER TO USER IDENTIFIER($CURRENT_EXEC_USER);
-
--- Verify clone storage efficiency (should show minimal initial storage usage)
--- here we are showing the sizes of the tables that we've just created, as well as the cloned table
--- we can see that the cloned tables takes up no storage!
-SELECT 
-    TABLE_NAME, 
-    CLONE_GROUP_ID, 
-    TABLE_CREATED,
-    ((ACTIVE_BYTES/1024)) AS STORAGE_USAGE_KB
-FROM INSURANCE_WORKSHOP_DEV.INFORMATION_SCHEMA.TABLE_STORAGE_METRICS
-WHERE TABLE_NAME LIKE 'RISK_INTELLIGENCE_DASHBOARD'
-ORDER BY TABLE_CREATED DESC
-LIMIT 1;
-
-/* ================================================================================
 DROP/UNDROP DEMONSTRATION WITH TIME TRAVEL
 ================================================================================
 */
@@ -129,8 +87,7 @@ DROP/UNDROP DEMONSTRATION WITH TIME TRAVEL
 -- Verify current table status before demonstration
 SELECT 
     'Current Dashboard Status' as CHECK_TYPE,
-    COUNT(*) as RECORD_COUNT,
-    MAX(LAST_UPDATED) as LAST_REFRESH
+    COUNT(*) as RECORD_COUNT
 FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD;
 
 -- Record timestamp for time travel reference
@@ -204,6 +161,49 @@ SELECT COUNT(*) as records_before_drop
 FROM ANALYTICS.RISK_INTELLIGENCE_DASHBOARD
 BEFORE(STATEMENT => $query_id);
 */
+
+
+/* ================================================================================
+ZERO-COPY CLONE FOR GOVERNANCE TESTING
+================================================================================
+*/
+
+-- Create development environment using zero-copy cloning
+CREATE OR REPLACE DATABASE INSURANCE_WORKSHOP_DEV 
+    CLONE INSURANCE_WORKSHOP_DB
+    COMMENT = 'Development environment clone for governance testing';
+
+-- Create developer role for testing governance policies
+CREATE ROLE IF NOT EXISTS GOVERNANCE_DEVELOPER
+    COMMENT = 'Developer role for governance testing in cloned environment';
+
+-- Grant basic privileges to developer role
+GRANT USAGE ON WAREHOUSE WORKSHOP_COMPUTE_WH TO ROLE GOVERNANCE_DEVELOPER;
+
+GRANT USAGE ON DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
+GRANT USAGE ON ALL SCHEMAS IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
+GRANT USAGE ON FUTURE SCHEMAS IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
+-- Existing objects
+GRANT SELECT ON ALL TABLES IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
+GRANT ALL PRIVILEGES ON ALL TABLES IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
+GRANT ALL PRIVILEGES ON ALL VIEWS IN DATABASE INSURANCE_WORKSHOP_DEV TO ROLE GOVERNANCE_DEVELOPER;
+
+-- Capture the current Snowflake user in a session variable
+SET CURRENT_EXEC_USER = CURRENT_USER();
+GRANT ROLE GOVERNANCE_DEVELOPER TO USER IDENTIFIER($CURRENT_EXEC_USER);
+
+-- Verify clone storage efficiency (should show minimal initial storage usage)
+-- here we are showing the sizes of the tables that we've just created, as well as the cloned table
+-- we can see that the cloned tables takes up no storage!
+SELECT 
+    TABLE_NAME, 
+    CLONE_GROUP_ID, 
+    TABLE_CREATED,
+    ((ACTIVE_BYTES/1024)) AS STORAGE_USAGE_KB
+FROM INSURANCE_WORKSHOP_DEV.INFORMATION_SCHEMA.TABLE_STORAGE_METRICS
+WHERE TABLE_NAME LIKE 'RISK_INTELLIGENCE_DASHBOARD'
+ORDER BY TABLE_CREATED DESC
+LIMIT 1;
 
 /* ================================================================================
 CLEANUP PROCEDURES (OPTIONAL)

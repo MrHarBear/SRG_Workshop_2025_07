@@ -382,15 +382,26 @@ SELECT
 FROM RAW_DATA.CUSTOMERS_RAW c
 INNER JOIN RAW_DATA.CLAIMS_RAW cl ON c.POLICY_NUMBER = cl.POLICY_NUMBER;
 
-/* ================================================================================
+
+/* =============================================================================
+ADDITIONAL DATA LOADING FROM GIT REPOSITORY
+============================================================================= */
+-- At this point, feel free to use the Git Integration to add the Git repository to the Snowflake workspace.
+-- https://github.com/MrHarBear/SRG_Workshop_2025_07
+
+/* =============================================================================
 ADDITIONAL DATA LOADING FROM GIT REPOSITORY
 ================================================================================
 Load data into schema-detected tables with automatic column mapping and Snowpipe
 ================================================================================
 */
--- Check pipe status
+-- -- Check pipe status
 -- SELECT SYSTEM$PIPE_STATUS('CLAIMS_DATA_PIPE') as CLAIMS_PIPE_STATUS;
--- Load all data files from Git repository to unified data stage
+
+-- USE ROLE ACCOUNTADMIN;
+-- USE DATABASE INSURANCE_WORKSHOP_DB;
+-- USE SCHEMA RAW_DATA;
+-- -- Load all data files from Git repository to unified data stage
 -- COPY FILES
 --     INTO @DATA_STAGE
 --     FROM '@INSURANCE_WORKSHOP_DEMO_REPO/branches/main/datasets/'
